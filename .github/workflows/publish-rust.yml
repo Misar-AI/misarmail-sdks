@@ -3,13 +3,18 @@ name: Publish Rust SDK
 on:
   push:
     tags: ["rust/v*"]
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Publish to crates.io
-        working-directory: rust
-        run: cargo publish --token ${{ secrets.CARGO_TOKEN }}
+      - run: cargo test
+      - run: cargo publish --token "$CRATES_IO_TOKEN"
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}

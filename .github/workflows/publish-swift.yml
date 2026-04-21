@@ -3,14 +3,16 @@ name: Publish Swift SDK
 on:
   push:
     tags: ["swift/v*"]
+  workflow_dispatch:
 
 jobs:
-  publish:
-    runs-on: macos-latest
+  build:
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Build & test
-        working-directory: swift
-        run: swift build && swift test
-      - name: Tag for Swift Package Index
-        run: echo "Swift Package Index auto-indexes from GitHub tag swift/v*"
+      - name: Build Swift package
+        run: swift build -c release
+      - name: Run tests
+        run: swift test
+      # SPM resolves from git tags directly — no registry upload needed.
+      # Users add: .package(url: "https://github.com/Misar-AI/misarmail-sdks", from: "1.0.0")

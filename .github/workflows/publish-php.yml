@@ -3,19 +3,25 @@ name: Publish PHP SDK
 on:
   push:
     tags: ["php/v*"]
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate composer.json
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+      - name: Install deps
         working-directory: php
+        run: composer install --no-dev
+      - name: Notify Packagist
         run: |
-          curl -sS https://getcomposer.org/installer | php
-          php composer.phar validate
-      - name: Trigger Packagist update
-        run: |
-          curl -XPOST -H 'content-type:application/json' \
-            "https://packagist.org/api/update-package?username=${{ secrets.PACKAGIST_USERNAME }}&apiToken=${{ secrets.PACKAGIST_TOKEN }}" \
-            -d '{"repository":{"url":"https://github.com/Misar-AI/misarmail-sdks"}}'
+          curl -s -X POST "https://packagist.org/api/update-package" \
+            -H "Content-Type: application/json" \
+            -d '{"repository":{"url":"https://github.com/Misar-AI/misarmail-sdks"}}' \
+            -u "$PACKAGIST_USERNAME:$PACKAGIST_TOKEN"
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}

@@ -3,17 +3,25 @@ name: Publish Dart SDK
 on:
   push:
     tags: ["dart/v*"]
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dart
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: stable
-      - name: Publish to pub.dev
-        working-directory: dart
-        run: dart pub publish --force
+      - run: dart pub get
+      - run: dart analyze
+      - name: Write pub credentials
+        run: |
+          mkdir -p ~/.config/dart
+          echo "$PUB_CREDENTIALS" > ~/.config/dart/pub-credentials.json
         env:
           PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
+      - run: dart pub publish --force

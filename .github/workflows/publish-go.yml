@@ -3,14 +3,20 @@ name: Publish Go SDK
 on:
   push:
     tags: ["go/v*"]
+  workflow_dispatch:
 
 jobs:
-  tag:
+  publish:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
     steps:
       - uses: actions/checkout@v4
-      - name: Create go module tag
-        run: |
-          VERSION="${GITHUB_REF_NAME#go/}"
-          git tag "go/$VERSION" HEAD || true
-          echo "Go module published at tag go/$VERSION — pkg.go.dev indexes automatically"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go build ./...
+      - run: go test ./...
+      # Go modules are served by proxy.golang.org automatically on tag push.
+      # No upload step needed — the tag triggers discovery.

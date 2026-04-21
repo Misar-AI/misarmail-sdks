@@ -1,59 +1,39 @@
 # MisarMail SDKs
 
-Official SDKs for the [MisarMail](https://mail.misar.io) transactional + marketing email API.
+Official SDKs for the [MisarMail API](https://mail.misar.io/docs/api-reference) — transactional email, campaigns, contacts, CRM, and lead finder.
 
-## SDKs
+## Available SDKs
 
-| Language | Directory | Registry | Package |
-|----------|-----------|----------|---------|
-| TypeScript / JavaScript | `typescript/` | npm | `@misar/mail` |
-| Python | `python/` | PyPI | `misarmail` |
-| Go | `go/` | pkg.go.dev | `github.com/Misar-AI/misarmail-sdks/go` |
-| Ruby | `ruby/` | RubyGems | `misarmail` |
-| PHP | `php/` | Packagist | `misar/mail` |
-| Java | `java/` | Maven Central | `io.misar.mail:misarmail-java` |
-| Kotlin | `kotlin/` | Maven Central | `io.misar.mail:misarmail-kotlin` |
-| C# / .NET | `csharp/` | NuGet | `MisarMail` |
-| Rust | `rust/` | crates.io | `misarmail` |
-| Dart | `dart/` | pub.dev | `misarmail` |
-| Flutter | `flutter/` | pub.dev | `misarmail_flutter` |
-| Swift | `swift/` | Swift Package Index | `MisarMail` |
-| CLI | `cli/` | npm | `@misar/mail-cli` |
-| C | `c/` | GitHub Releases | Binary / libmisarmail |
-| C++ | `cpp/` | GitHub Releases | Binary / libmisarmail++ |
-| Solidity | `solidity/` | npm | `@misar/mail-solidity` |
+| Language | Directory | Package | Install |
+|----------|-----------|---------|---------|
+| TypeScript / JS | [typescript/](typescript/) | `@misarmail/sdk` on npm | `npm install @misarmail/sdk` |
+| Python | [python/](python/) | `misarmail` on PyPI | `pip install misarmail` |
+| Go | [go/](go/) | `github.com/Misar-AI/misarmail-sdks/go` | `go get github.com/Misar-AI/misarmail-sdks/go` |
+| PHP | [php/](php/) | `misarai/misarmail-php` on Packagist | `composer require misarai/misarmail-php` |
+| Ruby | [ruby/](ruby/) | `misarmail` on RubyGems | `gem install misarmail` |
+| Rust | [rust/](rust/) | `misarmail` on crates.io | `cargo add misarmail` |
+| Dart | [dart/](dart/) | `misarmail` on pub.dev | `dart pub add misarmail` |
+| Flutter | [flutter/](flutter/) | `misar_mail_flutter` on pub.dev | `flutter pub add misar_mail_flutter` |
+| C# / .NET | [csharp/](csharp/) | `Misar.Mail` on NuGet | `dotnet add package Misar.Mail` |
+| Java | [java/](java/) | `io.misar:misarmail-java` on Maven Central | See [java/README.md](java/README.md) |
+| Kotlin | [kotlin/](kotlin/) | `io.misar:misarmail-kotlin` on Maven Central | See [kotlin/README.md](kotlin/README.md) |
+| Swift | [swift/](swift/) | SPM from this repo | `.package(url: "https://github.com/Misar-AI/misarmail-sdks", from: "1.0.0")` |
 
 ## Publishing
 
-Each SDK is published independently via a Git tag matching `<lang>/v<semver>`:
+Each SDK publishes automatically when a tag is pushed in the format `{language}/v{version}`:
 
 ```bash
-git tag typescript/v1.2.3 && git push origin typescript/v1.2.3
-git tag python/v1.2.3    && git push origin python/v1.2.3
-git tag go/v1.2.3        && git push origin go/v1.2.3
-# etc.
+git tag typescript/v1.0.0
+git push origin typescript/v1.0.0
 ```
 
-## Required GitHub Secrets
+See [PUBLISHING.md](PUBLISHING.md) for required secrets and registry setup.
 
-| Secret | Used by |
-|--------|---------|
-| `NPM_TOKEN` | typescript, cli, solidity |
-| `PUB_CREDENTIALS` | dart, flutter |
-| `CARGO_TOKEN` | rust |
-| `RUBYGEMS_API_KEY` | ruby |
-| `NUGET_API_KEY` | csharp |
-| `OSSRH_USERNAME` | java, kotlin |
-| `OSSRH_PASSWORD` | java, kotlin |
-| `GPG_PRIVATE_KEY` | java, kotlin |
-| `GPG_PASSPHRASE` | java, kotlin |
-| `PACKAGIST_USERNAME` | php |
-| `PACKAGIST_TOKEN` | php |
+## Documentation
 
-## API Base URL
+Full API reference and SDK guides at [mail.misar.io/docs](https://mail.misar.io/docs).
 
-```
-https://mail.misar.io/api/v1
-```
+## License
 
-Authentication: `Authorization: Bearer <MISARMAIL_API_KEY>` where API keys start with `msk_`.
+MIT

@@ -3,17 +3,26 @@ name: Publish Flutter SDK
 on:
   push:
     tags: ["flutter/v*"]
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "stable"
-      - name: Publish to pub.dev
-        working-directory: flutter
-        run: flutter pub publish --force
+          flutter-version: "3.22.x"
+          channel: stable
+      - run: flutter pub get
+      - run: flutter analyze
+      - name: Write pub credentials
+        run: |
+          mkdir -p ~/.config/dart
+          echo "$PUB_CREDENTIALS" > ~/.config/dart/pub-credentials.json
         env:
           PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
+      - run: dart pub publish --force

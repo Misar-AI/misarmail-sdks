@@ -5,50 +5,44 @@ dist/
 
 # Python
 __pycache__/
-*.pyc
 *.egg-info/
 dist/
 build/
+.venv/
 
 # Go
+*.exe
 vendor/
 
 # Rust
 target/
 
+# Ruby
+*.gem
+.bundle/
+vendor/
+
+# PHP
+vendor/
+
+# Dart/Flutter
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+
 # Java/Kotlin
-.gradle/
 build/
-*.class
 *.jar
+.gradle/
+target/
 
-# C/C++
-cmake-build-*/
-build/
-*.o
-*.so
-*.a
-
-# .NET
+# C#
 bin/
 obj/
 *.nupkg
 
-# Ruby
-Gemfile.lock
-coverage/
-*.gem
-
-# Dart/Flutter
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-pubspec.lock
-build/
-
 # Swift
 .build/
 *.xcodeproj
-
-# Misc
-.DS_Store

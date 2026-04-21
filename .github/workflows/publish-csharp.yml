@@ -3,20 +3,22 @@ name: Publish C# SDK
 on:
   push:
     tags: ["csharp/v*"]
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: csharp
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.x"
-      - name: Build & pack
-        working-directory: csharp
-        run: |
-          VERSION="${GITHUB_REF_NAME#csharp/v}"
-          dotnet build -c Release /p:Version=$VERSION
-          dotnet pack -c Release /p:Version=$VERSION --no-build -o ../nupkgs
-      - name: Push to NuGet
-        run: dotnet nuget push nupkgs/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+          dotnet-version: "8.0.x"
+      - run: dotnet restore
+      - run: dotnet build --configuration Release --no-restore
+      - run: dotnet pack --configuration Release --no-build --output ./nupkgs
+      - run: dotnet nuget push ./nupkgs/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
