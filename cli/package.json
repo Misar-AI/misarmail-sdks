@@ -1,0 +1,36 @@
+{
+  "name": "@misarmail/cli",
+  "version": "1.0.0",
+  "description": "Official CLI for MisarMail API — send emails, manage contacts, campaigns and more",
+  "bin": { "misarmail": "./dist/cli.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": ["misarmail", "email", "cli", "command-line"],
+  "author": "Misar AI <hello@misar.io>",
+  "license": "MIT",
+  "homepage": "https://mail.misar.io/docs/sdks/cli",
+  "repository": {
+    "type": "git",
+    "url": "https://git.misar.io/misaradmin/misarmail-cli.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "dependencies": {
+    "@misarmail/sdk": "^1.0.0",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0",
+    "@vitest/coverage-v8": "^1.0.0"
+  }
+}

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Misar.Mail</RootNamespace>
+    <AssemblyName>MisarMail</AssemblyName>
+
+    <!-- NuGet metadata -->
+    <PackageId>Misar.Mail</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Misar AI</Authors>
+    <Company>Misar AI Technology Pvt. Ltd.</Company>
+    <Description>Official C# SDK for MisarMail — transactional email, campaigns, leads, CRM. Full API coverage with async/await support.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://mail.misar.io/docs/sdks/csharp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/misarai/misarmail-dotnet</RepositoryUrl>
+    <PackageTags>misarmail;email;sdk;api;transactional;marketing</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,41 @@
+{
+  "name": "@misarmail/sdk",
+  "version": "1.0.0",
+  "description": "Official TypeScript/JavaScript SDK for MisarMail — full API coverage, retry, ESM+CJS",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": ["misarmail", "email", "sdk", "api", "transactional", "marketing"],
+  "author": "Misar AI <hello@misar.io>",
+  "license": "MIT",
+  "homepage": "https://mail.misar.io/docs/sdks/typescript",
+  "repository": {
+    "type": "git",
+    "url": "https://git.misar.io/misaradmin/misarmail-typescript-sdk.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0"
+  }
+}

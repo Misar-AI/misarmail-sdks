@@ -1,0 +1,54 @@
+# Node
+node_modules/
+dist/
+*.tgz
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Go
+vendor/
+
+# Rust
+target/
+
+# Java/Kotlin
+.gradle/
+build/
+*.class
+*.jar
+
+# C/C++
+cmake-build-*/
+build/
+*.o
+*.so
+*.a
+
+# .NET
+bin/
+obj/
+*.nupkg
+
+# Ruby
+Gemfile.lock
+coverage/
+*.gem
+
+# Dart/Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+build/
+
+# Swift
+.build/
+*.xcodeproj
+
+# Misc
+.DS_Store

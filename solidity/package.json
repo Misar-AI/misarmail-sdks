@@ -1,0 +1,25 @@
+{
+  "name": "@misarmail/solidity",
+  "version": "1.0.0",
+  "description": "Official Solidity smart contracts for MisarMail — on-chain email campaign billing and verification",
+  "author": "Misar AI <hello@misar.io>",
+  "license": "MIT",
+  "homepage": "https://mail.misar.io/docs/sdks/solidity",
+  "repository": {
+    "type": "git",
+    "url": "https://git.misar.io/misaradmin/misarmail-solidity-sdk.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "test": "hardhat test",
+    "compile": "hardhat compile"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.22.0",
+    "@openzeppelin/contracts": "^5.0.0"
+  }
+}

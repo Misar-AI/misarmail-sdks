@@ -1,0 +1,17 @@
+name: misarmail
+description: Official Dart SDK for MisarMail — transactional email, campaigns, leads, CRM. Full API coverage with retry logic.
+version: 1.0.0
+homepage: https://mail.misar.io/docs/sdks/dart
+repository: https://github.com/misarai/misarmail-dart
+issue_tracker: https://git.misar.io/misaradmin/misarmail-dart-sdk/issues
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  http: ^1.2.0
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^3.0.0
+  build_runner: ^2.4.9

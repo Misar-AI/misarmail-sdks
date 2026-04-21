@@ -1,0 +1,16 @@
+name: Publish Go SDK
+
+on:
+  push:
+    tags: ["go/v*"]
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create go module tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#go/}"
+          git tag "go/$VERSION" HEAD || true
+          echo "Go module published at tag go/$VERSION — pkg.go.dev indexes automatically"

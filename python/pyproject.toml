@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "misarmail"
+version = "1.0.0"
+description = "Official Python SDK for MisarMail — transactional email, campaigns, leads, CRM"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Misar AI", email = "hello@misar.io" }]
+keywords = ["misarmail", "email", "sdk", "api", "transactional", "marketing"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = ["httpx>=0.27"]
+
+[project.urls]
+Homepage = "https://mail.misar.io"
+Documentation = "https://mail.misar.io/docs/sdks/python"
+Repository = "https://git.misar.io/misaradmin/misarmail-python-sdk"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "respx>=0.21", "build", "twine"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.hatch.build.targets.wheel]
+packages = ["misarmail"]

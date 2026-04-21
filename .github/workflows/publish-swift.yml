@@ -1,0 +1,16 @@
+name: Publish Swift SDK
+
+on:
+  push:
+    tags: ["swift/v*"]
+
+jobs:
+  publish:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build & test
+        working-directory: swift
+        run: swift build && swift test
+      - name: Tag for Swift Package Index
+        run: echo "Swift Package Index auto-indexes from GitHub tag swift/v*"

@@ -1,0 +1,21 @@
+name: Publish PHP SDK
+
+on:
+  push:
+    tags: ["php/v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate composer.json
+        working-directory: php
+        run: |
+          curl -sS https://getcomposer.org/installer | php
+          php composer.phar validate
+      - name: Trigger Packagist update
+        run: |
+          curl -XPOST -H 'content-type:application/json' \
+            "https://packagist.org/api/update-package?username=${{ secrets.PACKAGIST_USERNAME }}&apiToken=${{ secrets.PACKAGIST_TOKEN }}" \
+            -d '{"repository":{"url":"https://github.com/Misar-AI/misarmail-sdks"}}'

@@ -1,0 +1,26 @@
+name: misar_mail_flutter
+description: Official Flutter SDK for MisarMail — secure key storage, retry, full API coverage for iOS, Android, macOS, Web.
+version: 1.0.0
+homepage: https://mail.misar.io/docs/sdks/flutter
+repository: https://github.com/misarai/misarmail-flutter
+issue_tracker: https://git.misar.io/misaradmin/misarmail-flutter-sdk/issues
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  flutter_secure_storage: ^9.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  mockito: ^5.4.4
+  build_runner: ^2.4.9
+  flutter_lints: ^3.0.0
+
+flutter:
+  # No assets or fonts needed for SDK
