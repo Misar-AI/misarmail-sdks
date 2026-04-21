@@ -1,19 +1,20 @@
-name: Publish Go SDK
-
+name: Validate & Tag Go SDK
 on:
   push:
-    tags: ["go/v*"]
+    tags: ['go/v*']
   workflow_dispatch:
-
+# Go modules are served directly from GitHub — pkg.go.dev auto-indexes on git tag.
 jobs:
-  publish:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version: 'stable'
+      - run: go build ./...
+        working-directory: go
       - run: go test ./...
         working-directory: go
-      - name: Verify tag format for pkg.go.dev
-        run: echo "Published at $GITHUB_REF_NAME — pkg.go.dev indexes automatically within ~30 min"
+      - run: go vet ./...
+        working-directory: go

@@ -1,29 +1,46 @@
-name: Publish C++ SDK
-
+name: Build & Release C++ SDK
 on:
   push:
-    tags: ["cpp/v*"]
+    tags: ['cpp/v*']
   workflow_dispatch:
-
 jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: libmisarmail_cpp-x86_64-linux
+          - os: macos-14
+            artifact: libmisarmail_cpp-aarch64-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libcurl4-openssl-dev nlohmann-json3-dev
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: brew install curl nlohmann-json
+      - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        working-directory: cpp
+      - run: cmake --build build
+        working-directory: cpp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: cpp/build/libmisarmail_cpp.a
   release:
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: sudo apt-get install -y libcurl4-openssl-dev cmake
-      - name: Build
-        working-directory: cpp
-        run: |
-          mkdir -p build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
-          tar czf ../misarmail-cpp-linux-amd64.tar.gz .
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/download-artifact@v4
         with:
-          name: "C++ SDK ${{ github.ref_name }}"
-          files: cpp/misarmail-cpp-linux-amd64.tar.gz
+          pattern: libmisarmail_cpp-*
+          merge-multiple: false
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: libmisarmail_cpp-**/*
           generate_release_notes: true

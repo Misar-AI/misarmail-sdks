@@ -1,10 +1,8 @@
 name: Publish Flutter SDK
-
 on:
   push:
-    tags: ["flutter/v*"]
+    tags: ['flutter/v*']
   workflow_dispatch:
-
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -12,12 +10,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.x'
+          channel: 'stable'
       - run: flutter pub get
+        working-directory: flutter
+      - run: flutter analyze
         working-directory: flutter
       - run: flutter test
         working-directory: flutter
-      - run: flutter pub publish --force
+      - run: dart pub publish --force
         working-directory: flutter
         env:
           PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}

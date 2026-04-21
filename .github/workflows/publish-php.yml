@@ -1,28 +1,18 @@
-name: Publish PHP SDK
-
+name: Publish PHP SDK (Packagist)
 on:
   push:
-    tags: ["php/v*"]
+    tags: ['php/v*']
   workflow_dispatch:
-
+# Packagist mirrors from GitHub via webhook — this triggers the sync API.
 jobs:
-  publish:
+  notify-packagist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.3"
-      - name: Install & test
-        working-directory: php
-        run: |
-          composer install --no-interaction
-          ./vendor/bin/phpunit tests/
-      - name: Trigger Packagist webhook
-        run: |
-          curl -sf -XPOST -H 'content-type:application/json' \
-            "https://packagist.org/api/update-package?username=$PACKAGIST_USERNAME&apiToken=$PACKAGIST_TOKEN" \
-            -d '{"repository":{"url":"https://github.com/Misar-AI/misarmail-sdks"}}'
+      - name: Trigger Packagist update
         env:
-          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
-          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+        run: |
+          curl -sSf -X POST \
+            -H "Content-Type: application/json" \
+            "https://packagist.org/api/update-package?username=misarmail&apiToken=${PACKAGIST_TOKEN}" \
+            -d '{"repository":{"url":"https://github.com/Misar-AI/misarmail-sdks"}}'

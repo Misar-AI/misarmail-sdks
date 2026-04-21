@@ -1,10 +1,8 @@
 name: Publish Python SDK
-
 on:
   push:
-    tags: ["python/v*"]
+    tags: ['python/v*']
   workflow_dispatch:
-
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -15,8 +13,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - run: pip install build pytest
+          python-version: '3.12'
+      - run: pip install build pytest pytest-asyncio
       - run: pytest
         working-directory: python
       - run: python -m build
@@ -24,3 +22,6 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: python/dist/
+          # OIDC trusted publisher — configure on PyPI dashboard (no token needed).
+          # Fallback: set PYPI_API_TOKEN secret and uncomment:
+          # password: ${{ secrets.PYPI_API_TOKEN }}

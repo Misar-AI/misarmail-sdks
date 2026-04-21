@@ -1,23 +1,16 @@
-name: Publish Swift SDK
-
+name: Validate & Tag Swift SDK
 on:
   push:
-    tags: ["swift/v*"]
+    tags: ['swift/v*']
   workflow_dispatch:
-
+# SPM resolves directly from GitHub tags — the tag itself is the "publish".
+# Consumers add: .package(url: "https://github.com/Misar-AI/<PRODUCT>-sdks", from: "0.1.0")
 jobs:
-  publish:
-    runs-on: macos-latest
+  validate:
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - run: swift build -c release
         working-directory: swift
       - run: swift test
         working-directory: swift
-      - name: Notify Swift Package Index
-        run: |
-          curl -sf "https://swiftpackageindex.com/api/packages/Misar-AI/misarmail-sdks/trigger-builds" \
-            -H "Authorization: Bearer $SPI_TOKEN" || echo "SPI webhook optional"
-        env:
-          SPI_TOKEN: ${{ secrets.SPI_TOKEN }}
-        continue-on-error: true

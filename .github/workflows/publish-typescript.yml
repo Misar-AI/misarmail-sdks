@@ -1,10 +1,8 @@
 name: Publish TypeScript SDK
-
 on:
   push:
-    tags: ["typescript/v*"]
+    tags: ['typescript/v*']
   workflow_dispatch:
-
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -15,8 +13,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
       - run: npm ci
         working-directory: typescript
       - run: npm run build
