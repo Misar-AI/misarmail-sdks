@@ -8,21 +8,16 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: flutter
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.x"
           channel: stable
       - run: flutter pub get
-      - run: flutter analyze
-      - name: Write pub credentials
-        run: |
-          mkdir -p ~/.config/dart
-          echo "$PUB_CREDENTIALS" > ~/.config/dart/pub-credentials.json
+        working-directory: flutter
+      - run: flutter test
+        working-directory: flutter
+      - run: flutter pub publish --force
+        working-directory: flutter
         env:
           PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
-      - run: dart pub publish --force

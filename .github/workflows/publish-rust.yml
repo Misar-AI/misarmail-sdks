@@ -8,13 +8,15 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
       - run: cargo test
-      - run: cargo publish --token "$CRATES_IO_TOKEN"
+        working-directory: rust
+      - run: cargo publish --token "$CARGO_TOKEN"
+        working-directory: rust
         env:
-          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          CARGO_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

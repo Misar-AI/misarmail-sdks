@@ -8,17 +8,22 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: csharp
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
-      - run: dotnet restore
-      - run: dotnet build --configuration Release --no-restore
-      - run: dotnet pack --configuration Release --no-build --output ./nupkgs
-      - run: dotnet nuget push ./nupkgs/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          dotnet-version: "8.x"
+      - name: Test
+        working-directory: csharp
+        run: dotnet test Tests/
+      - name: Pack & publish
+        working-directory: csharp
+        run: |
+          VERSION="${GITHUB_REF_NAME#csharp/v}"
+          dotnet pack -c Release /p:Version=${VERSION} -o ../nupkgs
+          dotnet nuget push ../nupkgs/*.nupkg \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}

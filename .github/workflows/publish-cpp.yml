@@ -1,0 +1,29 @@
+name: Publish C++ SDK
+
+on:
+  push:
+    tags: ["cpp/v*"]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get install -y libcurl4-openssl-dev cmake
+      - name: Build
+        working-directory: cpp
+        run: |
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+          tar czf ../misarmail-cpp-linux-amd64.tar.gz .
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "C++ SDK ${{ github.ref_name }}"
+          files: cpp/misarmail-cpp-linux-amd64.tar.gz
+          generate_release_notes: true

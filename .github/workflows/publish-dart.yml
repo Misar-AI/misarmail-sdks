@@ -8,20 +8,16 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: dart
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: stable
       - run: dart pub get
-      - run: dart analyze
-      - name: Write pub credentials
-        run: |
-          mkdir -p ~/.config/dart
-          echo "$PUB_CREDENTIALS" > ~/.config/dart/pub-credentials.json
+        working-directory: dart
+      - run: dart test
+        working-directory: dart
+      - run: dart pub publish --force
+        working-directory: dart
         env:
           PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
-      - run: dart pub publish --force

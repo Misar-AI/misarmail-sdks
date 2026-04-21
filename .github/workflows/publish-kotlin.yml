@@ -8,9 +8,6 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: kotlin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -18,9 +15,12 @@ jobs:
           java-version: "17"
           distribution: "temurin"
       - uses: gradle/actions/setup-gradle@v3
+      - run: ./gradlew test
+        working-directory: kotlin
       - run: ./gradlew publishToMavenCentral --no-configuration-cache
+        working-directory: kotlin
         env:
           OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
-          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}

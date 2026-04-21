@@ -8,15 +8,24 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ruby
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
-      - run: gem build misar_mail.gemspec
-      - run: gem push *.gem
+          bundler-cache: true
+          working-directory: ruby
+      - run: bundle exec rspec
+        working-directory: ruby
+      - name: Build gem
+        working-directory: ruby
+        run: gem build *.gemspec
+      - name: Push to RubyGems
+        working-directory: ruby
+        run: |
+          mkdir -p ~/.gem
+          printf -- "---\n:rubygems_api_key: %s\n" "$RUBYGEMS_API_KEY" > ~/.gem/credentials
+          chmod 0600 ~/.gem/credentials
+          gem push *.gem
         env:
-          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+          RUBYGEMS_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}

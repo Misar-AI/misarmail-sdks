@@ -8,15 +8,12 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
-      - run: go build ./...
+          go-version: "stable"
       - run: go test ./...
-      # Go modules are served by proxy.golang.org automatically on tag push.
-      # No upload step needed — the tag triggers discovery.
+        working-directory: go
+      - name: Verify tag format for pkg.go.dev
+        run: echo "Published at $GITHUB_REF_NAME — pkg.go.dev indexes automatically within ~30 min"

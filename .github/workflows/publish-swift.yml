@@ -6,13 +6,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: macos-14
+  publish:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build Swift package
-        run: swift build -c release
-      - name: Run tests
-        run: swift test
-      # SPM resolves from git tags directly — no registry upload needed.
-      # Users add: .package(url: "https://github.com/Misar-AI/misarmail-sdks", from: "1.0.0")
+      - run: swift build -c release
+        working-directory: swift
+      - run: swift test
+        working-directory: swift
+      - name: Notify Swift Package Index
+        run: |
+          curl -sf "https://swiftpackageindex.com/api/packages/Misar-AI/misarmail-sdks/trigger-builds" \
+            -H "Authorization: Bearer $SPI_TOKEN" || echo "SPI webhook optional"
+        env:
+          SPI_TOKEN: ${{ secrets.SPI_TOKEN }}
+        continue-on-error: true
