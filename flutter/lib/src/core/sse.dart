@@ -43,11 +43,16 @@ Stream<Map<String, dynamic>> streamSse(
       } on FormatException {
         // Leave data empty; the status carries the meaning.
       }
-      throw MisarMailError(
+      // MisarMailException, not MisarMailError: this file was written against
+      // the Dart SDK's error type, which takes (status, message, errorType,
+      // details). The Flutter SDK's hierarchy is MisarMailException(statusCode,
+      // message) and everything else extends it, so the four-argument call did
+      // not compile at all.
+      final message = (data['error'] ?? 'HTTP ${response.statusCode}').toString();
+      final errorType = (data['error_type'] ?? 'api_error').toString();
+      throw MisarMailException(
         response.statusCode,
-        (data['error'] ?? 'HTTP ${response.statusCode}').toString(),
-        (data['error_type'] ?? 'api_error').toString(),
-        data,
+        errorType == 'api_error' ? message : '$message ($errorType)',
       );
     }
 
