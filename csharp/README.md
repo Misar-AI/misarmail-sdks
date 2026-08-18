@@ -19,19 +19,19 @@ Targets `net8.0`. The surface is flat — `Group_MethodAsync`, not nested resour
 ### dotnet CLI
 
 ```bash
-dotnet add package MisarMail --version 5.0.0
+dotnet add package MisarMail --version 5.0.1
 ```
 
 ### PackageReference
 
 ```xml
-<PackageReference Include="MisarMail" Version="5.0.0" />
+<PackageReference Include="MisarMail" Version="5.0.1" />
 ```
 
 ### Package Manager
 
 ```powershell
-Install-Package MisarMail -Version 5.0.0
+Install-Package MisarMail -Version 5.0.1
 ```
 
 ---

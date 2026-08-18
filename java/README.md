@@ -22,20 +22,20 @@ Java 17+ on `java.net.http` with Jackson. The first seventeen resource groups al
 <dependency>
   <groupId>io.misar</groupId>
   <artifactId>misarmail</artifactId>
-  <version>5.0.0</version>
+  <version>5.0.1</version>
 </dependency>
 ```
 
 ### Gradle (Kotlin DSL)
 
 ```kotlin
-implementation("io.misar:misarmail:5.0.0")
+implementation("io.misar:misarmail:5.0.1")
 ```
 
 ### Gradle (Groovy)
 
 ```groovy
-implementation 'io.misar:misarmail:5.0.0'
+implementation 'io.misar:misarmail:5.0.1'
 ```
 
 ---

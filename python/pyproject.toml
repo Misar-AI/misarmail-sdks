@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "misarmail"
-version = "5.0.0"
+version = "5.0.1"
 description = "Send transactional email and run marketing campaigns from Python: MisarMail's HTTP API for sends, campaigns, contacts, templates, automations, domain and DMARC checks, address validation, tracking, analytics and webhooks — sync and async, retries, SSE streaming."
 readme = "README.md"
 requires-python = ">=3.9"

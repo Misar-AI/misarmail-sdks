@@ -256,3 +256,39 @@ jobs:
       version: ${{ needs.tag.outputs.dart_version }}
     secrets: inherit
 
+  # go, php and swift reach their registries through a tag rather than a publish
+  # command, but they still need a job here: a tag pushed with GITHUB_TOKEN
+  # raises no workflow-triggering event, so `push: tags:` on those workflows
+  # never fires for a tag this workflow created.
+
+  publish-go:
+    needs: tag
+    if: needs.tag.outputs.go == 'true'
+    uses: ./.github/workflows/publish-go.yml
+    permissions:
+      contents: read
+    secrets: inherit
+    with:
+      version: ${{ needs.tag.outputs.go_version }}
+
+  split-php:
+    needs: tag
+    if: needs.tag.outputs.php == 'true'
+    uses: ./.github/workflows/split-standalone.yml
+    permissions:
+      contents: read
+    secrets: inherit
+    with:
+      language: php
+      version: ${{ needs.tag.outputs.php_version }}
+
+  split-swift:
+    needs: tag
+    if: needs.tag.outputs.swift == 'true'
+    uses: ./.github/workflows/split-standalone.yml
+    permissions:
+      contents: read
+    secrets: inherit
+    with:
+      language: swift
+      version: ${{ needs.tag.outputs.swift_version }}
