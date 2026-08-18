@@ -19,13 +19,13 @@ JVM toolchain 17, built on `java.net.http` with coroutines and Jackson. Every ca
 ### Gradle (Kotlin DSL)
 
 ```kotlin
-implementation("io.misar:misarmail-kotlin:5.0.1")
+implementation("io.misar:misarmail-kotlin:5.0.2")
 ```
 
 ### Gradle (Groovy)
 
 ```groovy
-implementation 'io.misar:misarmail-kotlin:5.0.1'
+implementation 'io.misar:misarmail-kotlin:5.0.2'
 ```
 
 ### Maven
@@ -34,7 +34,7 @@ implementation 'io.misar:misarmail-kotlin:5.0.1'
 <dependency>
   <groupId>io.misar</groupId>
   <artifactId>misarmail-kotlin</artifactId>
-  <version>5.0.1</version>
+  <version>5.0.2</version>
 </dependency>
 ```
 

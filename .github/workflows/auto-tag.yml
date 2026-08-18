@@ -74,6 +74,15 @@ jobs:
       csharp_version: ${{ steps.tag.outputs.version_csharp }}
       dart: ${{ steps.tag.outputs.publish_dart }}
       dart_version: ${{ steps.tag.outputs.version_dart }}
+      # A job exposes only what it names here; the step already writes
+      # publish_go/php/swift, but without these lines the caller jobs read an
+      # empty string and skip.
+      go: ${{ steps.tag.outputs.publish_go }}
+      go_version: ${{ steps.tag.outputs.version_go }}
+      php: ${{ steps.tag.outputs.publish_php }}
+      php_version: ${{ steps.tag.outputs.version_php }}
+      swift: ${{ steps.tag.outputs.publish_swift }}
+      swift_version: ${{ steps.tag.outputs.version_swift }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -93,7 +102,7 @@ jobs:
           # (proxy.golang.org, Packagist and SwiftPM each read the tag). There
           # is nothing here to derive a version from, so they are tagged by
           # hand and split-standalone.yml takes it from there.
-          LANGS="typescript python rust ruby java kotlin csharp dart"
+          LANGS="typescript python rust ruby java kotlin csharp dart go php swift"
 
           GATE=",$(printf '%s' "${TARGETS:-}" | tr -d '[:space:]'),"
           if [ "$GATE" = ",," ]; then
@@ -134,6 +143,9 @@ jobs:
               kotlin)       raw=$(grep -m1 -E '^version[[:space:]]*=' kotlin/build.gradle.kts 2>/dev/null || true) ;;
               csharp)       raw=$(grep -h -m1 '<Version>' csharp/*.csproj 2>/dev/null || true) ;;
               dart) raw=$(grep -m1 -E '^version:' "${lang}/pubspec.yaml" 2>/dev/null || true) ;;
+              # go, php and swift have no package manifest — for all three the
+              # git tag IS the release — so they carry a plain VERSION file.
+              *)            raw=$(cat "${lang}/VERSION" 2>/dev/null || true) ;;
             esac
             # One rule for every language: the first semver-shaped token on the
             # line we found. There is deliberately no `|| echo "0.1.0"`

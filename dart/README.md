@@ -26,7 +26,7 @@ dart pub add misarmail
 
 ```yaml
 dependencies:
-  misarmail: ^5.0.1
+  misarmail: ^5.0.2
 ```
 
 ---

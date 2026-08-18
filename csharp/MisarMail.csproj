@@ -10,7 +10,7 @@
 
     <!-- NuGet metadata -->
     <PackageId>MisarMail</PackageId>
-    <Version>5.0.1</Version>
+    <Version>5.0.2</Version>
     <Authors>Misar AI</Authors>
     <Company>Misar AI Technology Pvt Ltd</Company>
     <Description>.NET client for MisarMail's transactional and marketing email API: send mail, run campaigns and A/B tests, manage contacts, segments, templates and automations, verify domains and DMARC, validate addresses, track revenue and read analytics. 33 resource groups over async/await, with retries, typed plan-limit errors and SSE streaming.</Description>
