@@ -568,10 +568,13 @@ module MisarMail
                 :webhooks, :usage,
                 :billing
 
-    def initialize(api_key:, timeout: 30, max_retries: 3)
+    # @param base_url [String] override the API host — point it at a stub
+    #   server in tests, or at a self-hosted deployment. Defaults to BASE_URL.
+    def initialize(api_key:, timeout: 30, max_retries: 3, base_url: BASE_URL)
       @api_key     = api_key
       @timeout     = timeout
       @max_retries = max_retries
+      @base_url    = base_url
 
       @plan          = PlanResource.new(self)
       @streaming     = StreamingResource.new(self)
@@ -614,7 +617,8 @@ module MisarMail
     # @param base   [String] override base URL (for billing/workspaces)
     # @return [Hash]
     # @raise [ApiError, NetworkError]
-    def request(method, path, data = {}, base = BASE_URL)
+    def request(method, path, data = {}, base = nil)
+      base ||= @base_url
       url      = URI.parse(base.chomp("/") + "/" + path.delete_prefix("/"))
       has_body = !data.empty? && %i[post put patch].include?(method)
       json_body = has_body ? JSON.generate(data) : nil
