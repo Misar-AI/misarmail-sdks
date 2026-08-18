@@ -39,7 +39,6 @@ jobs:
           missing=""
           [ -n "${OSSRH_USERNAME:-}" ]  || missing="$missing OSSRH_USERNAME"
           [ -n "${OSSRH_TOKEN:-}" ]     || missing="$missing OSSRH_TOKEN"
-          [ -n "${GPG_KEY_ID:-}" ]      || missing="$missing GPG_KEY_ID"
           [ -n "${GPG_PRIVATE_KEY:-}" ] || missing="$missing GPG_PRIVATE_KEY"
           [ -n "${GPG_PASSPHRASE:-}" ]  || missing="$missing GPG_PASSPHRASE"
           if [ -n "$missing" ]; then
