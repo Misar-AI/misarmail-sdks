@@ -6,13 +6,13 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.misar</groupId>
-    <artifactId>misarmail-java</artifactId>
+    <artifactId>misarmail</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
     <name>MisarMail Java SDK</name>
     <description>Official Java SDK for the MisarMail API — full API coverage, sync + async</description>
-    <url>https://mail.misar.io/docs/sdks/java</url>
+    <url>https://misarmail.com/docs/sdks/java</url>
 
     <licenses>
         <license>
@@ -25,15 +25,15 @@
         <developer>
             <name>Misar AI</name>
             <email>hello@misar.io</email>
-            <organization>Misar AI Technology Pvt. Ltd.</organization>
+            <organization>Misar AI Technology Pvt Ltd</organization>
             <organizationUrl>https://misar.io</organizationUrl>
         </developer>
     </developers>
 
     <scm>
-        <connection>scm:git:git://github.com/misarai/misarmail-java.git</connection>
-        <developerConnection>scm:git:ssh://github.com/misarai/misarmail-java.git</developerConnection>
-        <url>https://github.com/misarai/misarmail-java</url>
+        <connection>scm:git:git://github.com/Misar-AI/misarmail-sdks.git</connection>
+        <developerConnection>scm:git:ssh://github.com/Misar-AI/misarmail-sdks.git</developerConnection>
+        <url>https://github.com/Misar-AI/misarmail-sdks</url>
     </scm>
 
     <properties>
@@ -44,10 +44,14 @@
     </properties>
 
     <dependencies>
+        <!--
+            The client parses with Jackson's ObjectMapper. org.json was declared
+            but never imported by any source file, so the build could not compile.
+        -->
         <dependency>
-            <groupId>org.json</groupId>
-            <artifactId>json</artifactId>
-            <version>20240303</version>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.16.1</version>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

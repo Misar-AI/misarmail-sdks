@@ -1,120 +1,162 @@
-import pytest
+"""Tests for the MisarMail Python client.
+
+Rewritten against the resource-based client. The previous suite targeted a flat
+API (``client.send_email``, ``client.contacts_list``) that the client never
+exposed, so it had never run.
+"""
+
 import httpx
-import respx
+import pytest
 
-from misarmail import MisarMailClient, MisarMailError, MisarMailNetworkError
+import misarmail.client as mc
+from misarmail import MisarMailClient
+from misarmail.errors import MisarMailError, MisarMailPlanLimitError
 
-BASE = "https://mail.misar.io/api/v1"
-
-
-def make_client(**kwargs) -> MisarMailClient:
-    return MisarMailClient(api_key="test-key", **kwargs)
+BASE = "https://api.misar.io/mail/v1"
 
 
-@respx.mock
-async def test_send_email():
-    respx.post(f"{BASE}/send").mock(return_value=httpx.Response(200, json={"id": "msg_1", "status": "queued"}))
-    client = make_client()
-    resp = await client.send_email({"to": "a@b.com", "subject": "Hi", "html": "<p>Hi</p>"})
-    assert resp["id"] == "msg_1"
-    await client.aclose()
+class Recorder:
+    """Stands in for httpx.request and records what the SDK sent."""
+
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def __call__(self, method, url, **kw):
+        self.calls.append({"method": method, "url": str(url), "params": kw.get("params"), "json": kw.get("json")})
+        status, body, headers = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
+        return httpx.Response(status, json=body, headers=headers or {}, request=httpx.Request(method, url))
+
+    @property
+    def last(self):
+        return self.calls[-1]
 
 
-@respx.mock
-async def test_contacts_list():
-    respx.get(f"{BASE}/contacts").mock(return_value=httpx.Response(200, json={"contacts": [], "total": 0}))
-    client = make_client()
-    resp = await client.contacts_list()
-    assert resp["total"] == 0
-    await client.aclose()
+@pytest.fixture
+def record(monkeypatch):
+    def install(*responses):
+        rec = Recorder(*responses)
+        monkeypatch.setattr(mc.httpx, "request", rec)
+        return rec
+
+    return install
 
 
-@respx.mock
-async def test_contacts_create():
-    respx.post(f"{BASE}/contacts").mock(return_value=httpx.Response(200, json={"id": "c_1", "email": "x@y.com"}))
-    client = make_client()
-    resp = await client.contacts_create({"email": "x@y.com"})
-    assert resp["id"] == "c_1"
-    await client.aclose()
+def client(**kw):
+    return MisarMailClient("mmk_test", **kw)
 
 
-@respx.mock
-async def test_campaigns_list():
-    respx.get(f"{BASE}/campaigns").mock(return_value=httpx.Response(200, json={"campaigns": [], "total": 0}))
-    client = make_client()
-    resp = await client.campaigns_list()
-    assert "campaigns" in resp
-    await client.aclose()
+# ── The subscription surface ─────────────────────────────────────────────────
+
+def test_plan_get_targets_the_right_route(record):
+    rec = record((200, {"plan": {"slug": "starter", "name": "Starter"}, "usage": [], "upgrade": None}, None))
+    out = client().plan.get()
+
+    assert rec.last["method"] == "GET"
+    assert rec.last["url"] == f"{BASE}/plan"
+    assert out["plan"]["slug"] == "starter"
 
 
-@respx.mock
-async def test_campaigns_create():
-    payload = {"name": "Welcome", "subject": "Hi there"}
-    respx.post(f"{BASE}/campaigns").mock(return_value=httpx.Response(200, json={"id": "camp_1", **payload}))
-    client = make_client()
-    resp = await client.campaigns_create(payload)
-    assert resp["id"] == "camp_1"
-    await client.aclose()
+def test_plan_limits_passes_the_product_filter(record):
+    rec = record((200, {"success": True, "data": {}}, None))
+    client().plan.limits(product="mail")
+
+    assert rec.last["url"] == f"{BASE}/plan-limits"
+    assert rec.last["params"]["product"] == "mail"
 
 
-@respx.mock
-async def test_analytics_get():
-    respx.get(f"{BASE}/analytics").mock(return_value=httpx.Response(200, json={"sent": 100, "opens": 40, "clicks": 10}))
-    client = make_client()
-    resp = await client.analytics_get()
-    assert resp["sent"] == 100
-    await client.aclose()
+def test_wallet_debit_posts_the_body(record):
+    rec = record((200, {"success": True, "balance": 9.0, "idempotent": False}, None))
+    client().wallet.debit(data={"amount": 1, "reason": "test", "idempotency_key": "k1"})
+
+    assert rec.last["method"] == "POST"
+    assert rec.last["url"] == f"{BASE}/wallet/debit"
+    assert rec.last["json"]["idempotency_key"] == "k1"
 
 
-@respx.mock
-async def test_validate_email():
-    respx.post(f"{BASE}/validate").mock(return_value=httpx.Response(200, json={"valid": True, "email": "a@b.com"}))
-    client = make_client()
-    resp = await client.validate_email({"email": "a@b.com"})
-    assert resp["valid"] is True
-    await client.aclose()
+# ── Endpoints added in this pass ─────────────────────────────────────────────
+
+def test_emails_list_sends_folder_and_search(record):
+    rec = record((200, {"success": True, "data": [], "count": 0}, None))
+    client().emails.list(folder="inbox", search="invoice", limit=10)
+
+    assert rec.last["url"] == f"{BASE}/emails"
+    assert rec.last["params"] == {"folder": "inbox", "search": "invoice", "limit": 10}
 
 
-@respx.mock
-async def test_keys_list():
-    respx.get(f"{BASE}/keys").mock(return_value=httpx.Response(200, json={"keys": [{"id": "k_1", "name": "prod"}]}))
-    client = make_client()
-    resp = await client.keys_list()
-    assert resp["keys"][0]["id"] == "k_1"
-    await client.aclose()
+def test_emails_get_interpolates_the_id(record):
+    rec = record((200, {"success": True, "data": {"id": "e1"}}, None))
+    client().emails.get("e1")
+
+    assert rec.last["url"] == f"{BASE}/emails/e1"
 
 
-@respx.mock
-async def test_error_401():
-    respx.post(f"{BASE}/send").mock(return_value=httpx.Response(401, json={"error": "Unauthorized"}))
-    client = make_client()
-    with pytest.raises(MisarMailError) as exc_info:
-        await client.send_email({"to": "a@b.com"})
-    assert exc_info.value.status == 401
-    await client.aclose()
+def test_dmarc_check_requires_a_domain(record):
+    rec = record((200, {"success": True}, None))
+    client().dmarc.check(domain="misarmail.com", dkim_selector="s1")
+
+    assert rec.last["url"] == f"{BASE}/dmarc/check"
+    assert rec.last["params"] == {"domain": "misarmail.com", "dkim_selector": "s1"}
 
 
-@respx.mock
-async def test_retry_503():
-    """Should succeed on 2nd attempt after 503."""
-    route = respx.post(f"{BASE}/send")
-    route.side_effect = [
-        httpx.Response(503, json={"error": "Service Unavailable"}),
-        httpx.Response(200, json={"id": "msg_retry", "status": "queued"}),
-    ]
-    # Use a real async client so respx intercepts properly; patch sleep to not wait
-    import asyncio
-    original_sleep = asyncio.sleep
+def test_warmup_and_revenue_are_reachable(record):
+    rec = record((200, {"success": True, "data": [], "count": 0}, None))
+    client().warmup.get()
+    assert rec.last["url"] == f"{BASE}/warmup"
 
-    async def fast_sleep(_: float):
-        pass
+    client().revenue.attribution(period="30d")
+    assert rec.last["url"] == f"{BASE}/revenue/attribution"
+    assert rec.last["params"]["period"] == "30d"
 
-    import misarmail.client as _mod
-    _mod.asyncio.sleep = fast_sleep  # type: ignore[attr-defined]
-    try:
-        client = make_client(max_retries=2)
-        resp = await client.send_email({"to": "a@b.com"})
-        assert resp["id"] == "msg_retry"
-        await client.aclose()
-    finally:
-        _mod.asyncio.sleep = original_sleep  # type: ignore[attr-defined]
+
+# ── Errors and retries ──────────────────────────────────────────────────────
+
+def test_401_raises_a_typed_error(record):
+    record((401, {"error": "Invalid or missing API key"}, None))
+    with pytest.raises(MisarMailError) as exc:
+        client().plan.get()
+    assert exc.value.status == 401
+
+
+def test_503_is_retried_then_succeeds(record):
+    rec = record(
+        (503, {"error": "upstream"}, None),
+        (200, {"plan": {"slug": "starter"}}, None),
+    )
+    out = client(max_retries=3).plan.get()
+
+    assert len(rec.calls) == 2
+    assert out["plan"]["slug"] == "starter"
+
+
+def test_plan_refusal_is_not_retried(record):
+    """A spent allowance answers 429 — identical by status to a rate limit."""
+    rec = record((
+        429,
+        {
+            "error": "Monthly send allowance spent.",
+            "code": "plan_limit_exceeded",
+            "upgrade": {"feature": "emails", "currentPlanSlug": "starter",
+                        "urls": {"pricing": "https://misarmail.com/pricing"}},
+        },
+        {"Retry-After": "600", "X-Misar-Plan": "starter"},
+    ))
+
+    with pytest.raises(MisarMailPlanLimitError) as exc:
+        client(max_retries=3).plan.get()
+
+    e = exc.value
+    assert len(rec.calls) == 1, "a plan refusal must not burn the retry budget"
+    assert e.plan == "starter"
+    assert e.upgrade_url == "https://misarmail.com/pricing"
+    assert e.retry_after == 600
+    assert e.feature == "emails"
+
+
+def test_plain_rate_limit_is_still_retried(record):
+    rec = record(
+        (429, {"error": "Rate limit exceeded"}, None),
+        (200, {"plan": {"slug": "starter"}}, None),
+    )
+    client(max_retries=3).plan.get()
+    assert len(rec.calls) == 2

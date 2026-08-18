@@ -4,39 +4,95 @@ declare(strict_types=1);
 
 namespace MisarMail\Tests;
 
-use GuzzleHttp\Client as HttpClient;
-use GuzzleHttp\Handler\MockHandler;
-use GuzzleHttp\HandlerStack;
-use GuzzleHttp\Psr7\Response;
 use MisarMail\ApiError;
 use MisarMail\Client;
+use MisarMail\PlanLimitError;
+use MisarMail\StreamEvent;
 use PHPUnit\Framework\TestCase;
 
+/**
+ * Exercises the SDK against a real HTTP server.
+ *
+ * The client talks cURL directly, so there is no injectable transport to mock —
+ * and mocking one would not test the code that ships. `php -S` serving
+ * tests/server/router.php replays the real route shapes instead, which also
+ * makes the SSE tests meaningful: frames actually arrive over a socket, in
+ * pieces.
+ */
 class ClientTest extends TestCase
 {
-    private function makeClient(MockHandler $mock): Client
-    {
-        $stack      = HandlerStack::create($mock);
-        $httpClient = new HttpClient(['handler' => $stack]);
+    /** @var resource|null */
+    private static $server = null;
+    private static int $port = 0;
 
-        return new Client('test-key', [
-            'base_url'    => 'https://mail.misar.io/api/v1',
-            'max_retries' => 3,
-            'http_client' => $httpClient,
-        ]);
+    public static function setUpBeforeClass(): void
+    {
+        self::$port = random_int(20000, 60000);
+        $router = __DIR__ . '/server/router.php';
+        $descriptors = [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']];
+
+        self::$server = proc_open(
+            sprintf('exec php -S 127.0.0.1:%d %s', self::$port, escapeshellarg($router)),
+            $descriptors,
+            $pipes
+        );
+        if (!is_resource(self::$server)) {
+            self::fail('could not start the test server');
+        }
+
+        // Wait for the listener rather than sleeping a fixed amount.
+        for ($i = 0; $i < 100; $i++) {
+            $sock = @fsockopen('127.0.0.1', self::$port, $errno, $errstr, 0.1);
+            if ($sock !== false) {
+                fclose($sock);
+                return;
+            }
+            usleep(50_000);
+        }
+        self::fail('test server never came up');
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (is_resource(self::$server)) {
+            proc_terminate(self::$server);
+            proc_close(self::$server);
+        }
+    }
+
+    private function client(string $key = 'test-key'): Client
+    {
+        return new Client($key, 10, sprintf('http://127.0.0.1:%d/mail/v1', self::$port));
+    }
+
+    /** How many times the router has been hit since the last reset. */
+    private function requestCount(): int
+    {
+        $body = file_get_contents(
+            sprintf('http://127.0.0.1:%d/__count', self::$port),
+            false,
+            stream_context_create(['http' => ['header' => "Authorization: Bearer test-key\r\n"]])
+        );
+        return (int) (json_decode((string) $body, true)['count'] ?? -1);
+    }
+
+    private function reset(): void
+    {
+        file_get_contents(sprintf('http://127.0.0.1:%d/__reset', self::$port), false, stream_context_create([
+            'http' => ['header' => "Authorization: Bearer test-key\r\n", 'ignore_errors' => true],
+        ]));
+    }
+
+    public function testBaseUrlDerivesTheUnversionedApiBase(): void
+    {
+        $client = $this->client();
+        $this->assertStringEndsWith('/mail/v1', $client->baseUrl);
+        $this->assertStringEndsWith('/mail', $client->apiBase);
     }
 
     public function testSendEmail(): void
     {
-        $mock = new MockHandler([
-            new Response(200, ['Content-Type' => 'application/json'], json_encode([
-                'success'    => true,
-                'message_id' => 'msg_123',
-            ])),
-        ]);
-
-        $client = $this->makeClient($mock);
-        $result = $client->sendEmail([
+        $result = $this->client()->email->send([
             'from'    => 'sender@example.com',
             'to'      => ['recipient@example.com'],
             'subject' => 'Test',
@@ -49,116 +105,102 @@ class ClientTest extends TestCase
 
     public function testContactsList(): void
     {
-        $mock = new MockHandler([
-            new Response(200, ['Content-Type' => 'application/json'], json_encode([
-                'data'  => [['id' => 'c1', 'email' => 'a@b.com', 'status' => 'active', 'created_at' => '', 'updated_at' => '']],
-                'total' => 1,
-                'page'  => 1,
-                'limit' => 10,
-            ])),
-        ]);
-
-        $client = $this->makeClient($mock);
-        $result = $client->contactsList(1, 10);
+        $result = $this->client()->contacts->list();
 
         $this->assertCount(1, $result['data']);
         $this->assertSame('a@b.com', $result['data'][0]['email']);
     }
 
-    public function testCampaignsList(): void
+    public function testPlanReportsTheSubscriptionBehindTheKey(): void
     {
-        $mock = new MockHandler([
-            new Response(200, ['Content-Type' => 'application/json'], json_encode([
-                'data'  => [['id' => 'camp1', 'name' => 'Test', 'status' => 'draft', 'subject' => 'Hi', 'created_at' => '']],
-                'total' => 1,
-            ])),
-        ]);
+        $result = $this->client()->plan->get();
 
-        $client = $this->makeClient($mock);
-        $result = $client->campaignsList();
-
-        $this->assertCount(1, $result['data']);
-        $this->assertSame('camp1', $result['data'][0]['id']);
+        $this->assertSame('pro', $result['plan']['slug']);
+        $this->assertSame(50000, $result['limits']['emails_per_month']);
     }
 
-    public function testAnalyticsGet(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, ['Content-Type' => 'application/json'], json_encode([
-                'sent'          => 100,
-                'delivered'     => 95,
-                'opens'         => 40,
-                'clicks'        => 10,
-                'bounces'       => 5,
-                'unsubscribes'  => 2,
-                'open_rate'     => 0.42,
-                'click_rate'    => 0.10,
-            ])),
-        ]);
-
-        $client = $this->makeClient($mock);
-        $result = $client->analyticsGet();
-
-        $this->assertSame(100, $result['sent']);
-        $this->assertSame(95, $result['delivered']);
-    }
-
-    public function testValidateEmail(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, ['Content-Type' => 'application/json'], json_encode([
-                'valid'      => true,
-                'disposable' => false,
-                'mx_found'   => true,
-                'suggestion' => '',
-            ])),
-        ]);
-
-        $client = $this->makeClient($mock);
-        $result = $client->validateEmail('user@example.com');
-
-        $this->assertTrue($result['valid']);
-        $this->assertFalse($result['disposable']);
-    }
-
-    public function testError401ThrowsApiError(): void
+    public function testUnauthorizedRaisesApiError(): void
     {
         $this->expectException(ApiError::class);
         $this->expectExceptionCode(401);
-
-        $mock = new MockHandler([
-            new Response(401, ['Content-Type' => 'application/json'], json_encode(['error' => 'unauthorized'])),
-        ]);
-
-        $client = $this->makeClient($mock);
-        $client->sendEmail([
-            'from'    => 'a@b.com',
-            'to'      => ['c@d.com'],
-            'subject' => 'Test',
-        ]);
+        $this->client('wrong-key')->contacts->list();
     }
 
-    public function testRetry503(): void
+    public function testSpentAllowanceRaisesPlanLimitErrorAndIsNotRetried(): void
     {
-        $mock = new MockHandler([
-            new Response(503, [], ''),
-            new Response(503, [], ''),
-            new Response(200, ['Content-Type' => 'application/json'], json_encode([
-                'success'    => true,
-                'message_id' => 'msg_retry',
-            ])),
-        ]);
+        $this->reset();
+        try {
+            $this->client()->campaigns->create(['name' => 'Blast']);
+            $this->fail('expected PlanLimitError');
+        } catch (PlanLimitError $e) {
+            $this->assertSame(429, $e->status);
+            $this->assertSame('starter', $e->plan);
+            $this->assertSame('campaigns', $e->feature);
+            $this->assertSame(3600, $e->retryAfter);
+            $this->assertSame('https://misarmail.com/pricing', $e->upgradeUrl);
+        }
 
-        $client = $this->makeClient($mock);
-        $result = $client->sendEmail([
-            'from'    => 'a@b.com',
-            'to'      => ['c@d.com'],
-            'subject' => 'Retry test',
-        ]);
+        // The whole point of the typed error: a spent allowance is not worth
+        // retrying, so the server must have seen exactly one request — not the
+        // three a plain retryable 429 would have produced.
+        $this->assertSame(1, $this->requestCount());
+    }
 
-        $this->assertTrue($result['success']);
-        $this->assertSame('msg_retry', $result['message_id']);
-        // MockHandler exhausted means 3 requests were made
-        $this->assertSame(0, $mock->count());
+    public function testRetriesA503(): void
+    {
+        $this->reset();
+        $result = $this->client()->templates->list();
+
+        $this->assertSame('t1', $result['data'][0]['id']);
+        $this->assertSame(3, $result['attempts']);
+    }
+
+    public function testStreamGenerateEmail(): void
+    {
+        $seen = [];
+        $this->client()->streaming->generateEmail(['prompt' => 'hi'], function (StreamEvent $e) use (&$seen) {
+            $seen[] = $e->data['delta'];
+        });
+
+        // "Hel" and "lo" arrived in separate writes with the frame boundary
+        // split across them, so this asserts the buffering works.
+        $this->assertSame(['Hel', 'lo', '!'], $seen);
+    }
+
+    public function testStreamStopsAtDoneSentinel(): void
+    {
+        $seen = [];
+        $this->client()->streaming->generateEmail([], function (StreamEvent $e) use (&$seen) {
+            $seen[] = $e->raw;
+        });
+
+        // The router writes one more frame after [DONE]; it must not be delivered.
+        $this->assertNotContains('{"delta":"never"}', $seen);
+        $this->assertCount(3, $seen);
+    }
+
+    public function testStreamHandlerCanStopEarly(): void
+    {
+        $seen = [];
+        $this->client()->streaming->campaignSend('camp1', function (StreamEvent $e) use (&$seen) {
+            $seen[] = $e->data['sent'];
+            return false; // stop after the first frame
+        });
+
+        $this->assertSame([1], $seen);
+    }
+
+    public function testStreamRefusalRaisesPlanLimitError(): void
+    {
+        try {
+            $this->client()->streaming->campaignSend('locked', function (StreamEvent $e) {
+                $this->fail('no frame should be delivered on a refusal');
+            });
+            $this->fail('expected PlanLimitError');
+        } catch (PlanLimitError $e) {
+            $this->assertSame(402, $e->status);
+            $this->assertSame('free', $e->plan);
+            $this->assertSame('campaign_streaming', $e->feature);
+        }
     }
 }

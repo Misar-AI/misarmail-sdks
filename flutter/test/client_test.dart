@@ -2,284 +2,198 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:mockito/annotations.dart';
-import 'package:mockito/mockito.dart';
-import 'package:misar_mail_flutter/misar_mail_flutter.dart';
+import 'package:http/testing.dart';
+import 'package:misarmail_flutter/misarmail_flutter.dart';
 
-import 'client_test.mocks.dart';
-
-@GenerateMocks([http.Client, SecureKeyStore])
-void main() {
-  late MockClient mockHttp;
-  late MisarMailClient client;
-
-  setUp(() {
-    mockHttp = MockClient();
-    client = MisarMailClient(
-      apiKey: 'msk_test',
-      httpClient: mockHttp,
-    );
-  });
-
-  http.Response _ok(Map<String, dynamic> body) =>
-      http.Response(jsonEncode(body), 200);
-
-  http.Response _err(int status, String msg) =>
-      http.Response(jsonEncode({'error': msg}), status);
-
-  // ---- sendEmail ------------------------------------------------------------
-
-  test('sendEmail POSTs /send and returns body', () async {
-    when(mockHttp.post(any, headers: anyNamed('headers'), body: anyNamed('body')))
-        .thenAnswer((_) async => _ok({'id': 'msg_1'}));
-
-    final res = await client.sendEmail({'to': 'a@b.com', 'subject': 'Hi'});
-    expect(res['id'], 'msg_1');
-  });
-
-  // ---- contactsList ---------------------------------------------------------
-
-  test('contactsList GETs /contacts', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({'contacts': []}));
-
-    final res = await client.contactsList();
-    expect(res.containsKey('contacts'), isTrue);
-  });
-
-  // ---- contactsCreate -------------------------------------------------------
-
-  test('contactsCreate POSTs /contacts', () async {
-    when(mockHttp.post(any, headers: anyNamed('headers'), body: anyNamed('body')))
-        .thenAnswer((_) async => _ok({'id': 'cid_1'}));
-
-    final res = await client.contactsCreate({'email': 'x@y.com'});
-    expect(res['id'], 'cid_1');
-  });
-
-  // ---- campaignsList --------------------------------------------------------
-
-  test('campaignsList GETs /campaigns', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({'campaigns': []}));
-
-    final res = await client.campaignsList();
-    expect(res.containsKey('campaigns'), isTrue);
-  });
-
-  // ---- campaignsCreate ------------------------------------------------------
-
-  test('campaignsCreate POSTs /campaigns', () async {
-    when(mockHttp.post(any, headers: anyNamed('headers'), body: anyNamed('body')))
-        .thenAnswer((_) async => _ok({'id': 'camp_1'}));
-
-    final res = await client.campaignsCreate({'name': 'Spring'});
-    expect(res['id'], 'camp_1');
-  });
-
-  // ---- analyticsGet ---------------------------------------------------------
-
-  test('analyticsGet GETs /analytics/{id}', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({'opens': 42}));
-
-    final res = await client.analyticsGet('camp_1');
-    expect(res['opens'], 42);
-
-    final captured = verify(mockHttp.get(captureAny, headers: anyNamed('headers'))).captured;
-    expect((captured.first as Uri).path, contains('/analytics/camp_1'));
-  });
-
-  // ---- validateEmail --------------------------------------------------------
-
-  test('validateEmail POSTs /validate with email field', () async {
-    when(mockHttp.post(any, headers: anyNamed('headers'), body: anyNamed('body')))
-        .thenAnswer((_) async => _ok({'valid': true}));
-
-    final res = await client.validateEmail('test@misar.io');
-    expect(res['valid'], isTrue);
-
-    final captured = verify(mockHttp.post(
-      captureAny,
-      headers: anyNamed('headers'),
-      body: captureAnyNamed('body'),
-    )).captured;
-    final sentBody = jsonDecode(captured[1] as String) as Map<String, dynamic>;
-    expect(sentBody['email'], 'test@misar.io');
-  });
-
-  // ---- keysList -------------------------------------------------------------
-
-  test('keysList GETs /keys', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({'keys': []}));
-
-    final res = await client.keysList();
-    expect(res.containsKey('keys'), isTrue);
-  });
-
-  // ---- abTestsList ----------------------------------------------------------
-
-  test('abTestsList GETs /ab-tests', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({'tests': []}));
-
-    final res = await client.abTestsList();
-    expect(res.containsKey('tests'), isTrue);
-  });
-
-  // ---- sandboxList ----------------------------------------------------------
-
-  test('sandboxList GETs /sandbox', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({'messages': []}));
-
-    final res = await client.sandboxList();
-    expect(res.containsKey('messages'), isTrue);
-  });
-
-  // ---- trackEvent -----------------------------------------------------------
-
-  test('trackEvent POSTs /track/event', () async {
-    when(mockHttp.post(any, headers: anyNamed('headers'), body: anyNamed('body')))
-        .thenAnswer((_) async => _ok({'ok': true}));
-
-    final res = await client.trackEvent({'event': 'open'});
-    expect(res['ok'], isTrue);
-  });
-
-  // ---- trackPurchase --------------------------------------------------------
-
-  test('trackPurchase POSTs /track/purchase', () async {
-    when(mockHttp.post(any, headers: anyNamed('headers'), body: anyNamed('body')))
-        .thenAnswer((_) async => _ok({'ok': true}));
-
-    final res = await client.trackPurchase({'amount': 99});
-    expect(res['ok'], isTrue);
-  });
-
-  // ---- inboundList ----------------------------------------------------------
-
-  test('inboundList GETs /inbound', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({'inbound': []}));
-
-    final res = await client.inboundList();
-    expect(res.containsKey('inbound'), isTrue);
-  });
-
-  // ---- templatesList --------------------------------------------------------
-
-  test('templatesList GETs /templates', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({'templates': []}));
-
-    final res = await client.templatesList();
-    expect(res.containsKey('templates'), isTrue);
-  });
-
-  // ---- templatesRender ------------------------------------------------------
-
-  test('templatesRender POSTs /templates/{id}/render with variables', () async {
-    when(mockHttp.post(any, headers: anyNamed('headers'), body: anyNamed('body')))
-        .thenAnswer((_) async => _ok({'html': '<p>Hello</p>'}));
-
-    final res = await client.templatesRender('tmpl_1', {'name': 'Alice'});
-    expect(res['html'], '<p>Hello</p>');
-
-    final captured = verify(mockHttp.post(
-      captureAny,
-      headers: anyNamed('headers'),
-      body: captureAnyNamed('body'),
-    )).captured;
-    expect((captured[0] as Uri).path, contains('/templates/tmpl_1/render'));
-    final sentBody = jsonDecode(captured[1] as String) as Map<String, dynamic>;
-    expect((sentBody['variables'] as Map)['name'], 'Alice');
-  });
-
-  // ---- error handling -------------------------------------------------------
-
-  test('throws MisarMailException on 4xx', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _err(401, 'unauthorized'));
-
-    expect(
-      () => client.contactsList(),
-      throwsA(isA<MisarMailException>().having((e) => e.statusCode, 'statusCode', 401)),
-    );
-  });
-
-  test('retries on 429 then throws on repeated failure', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _err(429, 'rate limited'));
-
-    final clientFast = MisarMailClient(
-      apiKey: 'msk_test',
-      maxRetries: 2,
-      httpClient: mockHttp,
+MisarMailClient _client(http.Client mock, {int maxRetries = 1}) =>
+    MisarMailClient(
+      apiKey: 'mmk_test',
+      baseUrl: 'https://api.misar.io/mail/v1',
+      maxRetries: maxRetries,
+      httpClient: mock,
     );
 
-    await expectLater(
-      clientFast.contactsList(),
-      throwsA(isA<MisarMailException>().having((e) => e.statusCode, 'statusCode', 429)),
-    );
-
-    verify(mockHttp.get(any, headers: anyNamed('headers'))).called(2);
-  });
-
-  test('retries on 503 and succeeds on second attempt', () async {
-    var calls = 0;
-    when(mockHttp.get(any, headers: anyNamed('headers'))).thenAnswer((_) async {
-      calls++;
-      if (calls == 1) return _err(503, 'unavailable');
-      return _ok({'contacts': []});
+/// Streams the given pieces as one `text/event-stream` body, so a frame
+/// boundary can land mid-chunk — where buffering bugs show up.
+MockClient _sseMock(List<String> pieces, {void Function(http.BaseRequest)? onRequest}) =>
+    MockClient.streaming((req, bodyStream) async {
+      onRequest?.call(req);
+      // Each piece is a separate chunk, so a frame boundary can straddle two
+      // reads. A StreamController would deadlock here: awaiting close() before
+      // anything listens never completes.
+      return http.StreamedResponse(
+        Stream.fromIterable(pieces.map(utf8.encode)),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
     });
 
-    final res = await client.contactsList();
-    expect(res.containsKey('contacts'), isTrue);
-    expect(calls, 2);
+void main() {
+  group('rest', () {
+    test('email.send() returns the parsed body', () async {
+      final mock = MockClient((req) async =>
+          http.Response('{"success":true,"message_id":"msg_123"}', 200,
+              headers: {'content-type': 'application/json'}));
+
+      final result = await _client(mock).email.send({'from': 'a@b.com'});
+
+      expect(result['success'], isTrue);
+      expect(result['message_id'], 'msg_123');
+    });
+
+    test('contacts.list() returns data', () async {
+      final mock = MockClient((req) async => http.Response(
+          '{"data":[{"id":"c1","email":"a@b.com"}],"total":1}', 200,
+          headers: {'content-type': 'application/json'}));
+
+      final result = await _client(mock).contacts.list();
+
+      expect(result['data'][0]['email'], 'a@b.com');
+    });
+
+    test('plan.get() reports the subscription behind the key', () async {
+      final mock = MockClient((req) async => http.Response(
+          '{"plan":{"slug":"pro"},"limits":{"emails_per_month":50000}}', 200,
+          headers: {'content-type': 'application/json'}));
+
+      final result = await _client(mock).plan.get();
+
+      expect(result['plan']['slug'], 'pro');
+      expect(result['limits']['emails_per_month'], 50000);
+    });
+
+    test('a 401 raises with the status', () async {
+      final mock = MockClient((req) async =>
+          http.Response('{"error":"unauthorized"}', 401,
+              headers: {'content-type': 'application/json'}));
+
+      expect(
+        () => _client(mock).contacts.list(),
+        throwsA(isA<MisarMailException>()
+            .having((e) => e.statusCode, 'statusCode', 401)),
+      );
+    });
+
+    test('retries a 503 then succeeds', () async {
+      var attempts = 0;
+      final mock = MockClient((req) async {
+        attempts++;
+        if (attempts < 3) {
+          return http.Response('{"error":"unavailable"}', 503);
+        }
+        return http.Response('{"data":[{"id":"t1"}]}', 200,
+            headers: {'content-type': 'application/json'});
+      });
+
+      final result = await _client(mock, maxRetries: 3).templates.list();
+
+      expect(result['data'][0]['id'], 't1');
+      expect(attempts, 3);
+    });
   });
 
-  // ---- Authorization header -------------------------------------------------
+  group('plan limits', () {
+    test('a spent allowance raises PlanLimit and is not retried', () async {
+      var attempts = 0;
+      final mock = MockClient((req) async {
+        attempts++;
+        return http.Response(
+          '{"code":"plan_limit_exceeded","error":"monthly campaign allowance spent",'
+          '"upgrade":{"feature":"campaigns","currentPlanSlug":"starter",'
+          '"urls":{"pricing":"https://misarmail.com/pricing"}}}',
+          429,
+          headers: {
+            'content-type': 'application/json',
+            'x-misar-plan': 'starter',
+            'retry-after': '3600',
+          },
+        );
+      });
 
-  test('sends correct Authorization header', () async {
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({}));
+      // maxRetries 3, so a plain retryable 429 would have been retried twice more.
+      await expectLater(
+        () => _client(mock, maxRetries: 3).campaigns.create({'name': 'Blast'}),
+        throwsA(isA<MisarMailPlanLimitException>()
+            .having((e) => e.statusCode, 'statusCode', 429)
+            .having((e) => e.plan, 'plan', 'starter')
+            .having((e) => e.feature, 'feature', 'campaigns')
+            .having((e) => e.retryAfter, 'retryAfter', 3600)
+            .having((e) => e.upgradeUrl, 'upgradeUrl',
+                'https://misarmail.com/pricing')),
+      );
 
-    await client.keysList();
-
-    final captured = verify(mockHttp.get(any, headers: captureAnyNamed('headers'))).captured;
-    final headers = captured.first as Map<String, String>;
-    expect(headers['Authorization'], 'Bearer msk_test');
+      // A spent allowance cannot be fixed by retrying.
+      expect(attempts, 1);
+    });
   });
 
-  // ---- SecureKeyStore -------------------------------------------------------
+  group('streaming', () {
+    test('generateEmail() yields each frame', () async {
+      // The boundary between "Hel" and "lo" is split across two chunks.
+      final mock = _sseMock([
+        'data: {"delta":"Hel"}\n',
+        '\ndata: {"delta":"lo"}\n\n',
+        ': keepalive\n\n',
+        'data: {"delta":"!"}\n\n',
+        'data: [DONE]\n\n',
+      ]);
 
-  test('withSecureStorage throws StateError when no key stored', () async {
-    final mockStore = MockSecureKeyStore();
-    when(mockStore.loadApiKey()).thenAnswer((_) async => null);
+      final deltas = await _client(mock)
+          .streaming
+          .generateEmail({'prompt': 'hi'})
+          .map((e) => e.data['delta'] as String)
+          .toList();
 
-    await expectLater(
-      MisarMailClient.withSecureStorage(keyStore: mockStore),
-      throwsA(isA<StateError>()),
-    );
-  });
+      expect(deltas, ['Hel', 'lo', '!']);
+    });
 
-  test('withSecureStorage creates client with stored key', () async {
-    final mockStore = MockSecureKeyStore();
-    when(mockStore.loadApiKey()).thenAnswer((_) async => 'msk_stored');
-    when(mockHttp.get(any, headers: anyNamed('headers')))
-        .thenAnswer((_) async => _ok({'keys': []}));
+    test('the stream stops at the [DONE] sentinel', () async {
+      final mock = _sseMock([
+        'data: {"sent":1}\n\n',
+        'data: [DONE]\n\n',
+        'data: {"sent":999}\n\n',
+      ]);
 
-    final secureClient = await MisarMailClient.withSecureStorage(
-      keyStore: mockStore,
-      httpClient: mockHttp,
-    );
+      final seen =
+          await _client(mock).streaming.campaignSend('camp1').toList();
 
-    await secureClient.keysList();
+      // Anything after the sentinel must never be delivered.
+      expect(seen.length, 1);
+      expect(seen.first.data['sent'], 1);
+    });
 
-    final captured = verify(mockHttp.get(any, headers: captureAnyNamed('headers'))).captured;
-    final headers = captured.first as Map<String, String>;
-    expect(headers['Authorization'], 'Bearer msk_stored');
+    test('the stream uses the unversioned api base', () async {
+      late http.BaseRequest seen;
+      final mock = _sseMock(['data: [DONE]\n\n'], onRequest: (r) => seen = r);
+
+      await _client(mock).streaming.campaignSend('camp1').toList();
+
+      // Both SSE routes live outside /v1, so the path must not carry it.
+      expect(seen.url.toString(),
+          'https://api.misar.io/mail/campaigns/camp1/send-stream');
+    });
+
+    test('a refused stream raises PlanLimit before any frame', () async {
+      final mock = MockClient.streaming((req, bodyStream) async =>
+          http.StreamedResponse(
+            Stream.value(utf8.encode(
+                '{"code":"plan_limit_exceeded","error":"streaming is not on your plan",'
+                '"upgrade":{"feature":"campaign_streaming",'
+                '"urls":{"pricing":"https://misarmail.com/pricing"}}}')),
+            402,
+            headers: {
+              'content-type': 'application/json',
+              'x-misar-plan': 'free',
+            },
+          ));
+
+      expect(
+        () => _client(mock).streaming.campaignSend('locked').toList(),
+        throwsA(isA<MisarMailPlanLimitException>()
+            .having((e) => e.statusCode, 'statusCode', 402)
+            .having((e) => e.plan, 'plan', 'free')
+            .having((e) => e.feature, 'feature', 'campaign_streaming')),
+      );
+    });
   });
 }

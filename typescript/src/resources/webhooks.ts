@@ -4,26 +4,26 @@ export class WebhooksResource {
   constructor(private readonly client: BaseClient) {}
 
   list() {
-    return this.client.request('GET', '/webhooks');
+    return this.client.requestRoot('GET', '/webhooks');
   }
 
   create(data: Record<string, unknown>) {
-    return this.client.request('POST', '/webhooks', data);
+    return this.client.requestRoot('POST', '/webhooks', data);
   }
 
   get(id: string) {
-    return this.client.request('GET', `/webhooks/${id}`);
+    return this.client.requestRoot('GET', `/webhooks/${id}`);
   }
 
   update(id: string, data: Record<string, unknown>) {
-    return this.client.request('PATCH', `/webhooks/${id}`, data);
+    return this.client.requestRoot('PATCH', `/webhooks/${id}`, data);
   }
 
   delete(id: string) {
-    return this.client.request('DELETE', `/webhooks/${id}`);
+    return this.client.requestRoot('DELETE', `/webhooks/${id}`);
   }
 
   test(id: string) {
-    return this.client.request('POST', `/webhooks/${id}/test`);
+    return this.client.requestRoot('POST', `/webhooks/${id}/test`);
   }
 }

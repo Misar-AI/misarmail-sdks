@@ -5,18 +5,18 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <RootNamespace>Misar.Mail</RootNamespace>
+    <RootNamespace>MisarMail</RootNamespace>
     <AssemblyName>MisarMail</AssemblyName>
 
     <!-- NuGet metadata -->
-    <PackageId>Misar.Mail</PackageId>
+    <PackageId>MisarMail</PackageId>
     <Version>1.0.0</Version>
     <Authors>Misar AI</Authors>
-    <Company>Misar AI Technology Pvt. Ltd.</Company>
+    <Company>Misar AI Technology Pvt Ltd</Company>
     <Description>Official C# SDK for MisarMail — transactional email, campaigns, leads, CRM. Full API coverage with async/await support.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://mail.misar.io/docs/sdks/csharp</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/misarai/misarmail-dotnet</RepositoryUrl>
+    <PackageProjectUrl>https://misarmail.com/docs/sdks/csharp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Misar-AI/misarmail-sdks</RepositoryUrl>
     <PackageTags>misarmail;email;sdk;api;transactional;marketing</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
@@ -24,6 +24,16 @@
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!--
+    Tests/ is its own project (Tests/MisarMailTests.csproj) and references xUnit.
+    Without this exclusion the SDK's default **/*.cs glob pulls the test sources
+    into the library build, which then fails on the missing xUnit reference.
+  -->
+  <ItemGroup>
+    <Compile Remove="Tests/**" />
+    <None Remove="Tests/**" />
   </ItemGroup>
 
 </Project>

@@ -8,19 +8,84 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	defaultBaseURL    = "https://mail.misar.io/api/v1"
-	defaultAPIBase    = "https://mail.misar.io/api"
+	defaultBaseURL    = "https://api.misar.io/mail/v1"
+	defaultAPIBase    = "https://api.misar.io/mail"
 	defaultMaxRetries = 3
 	defaultTimeout    = 30 * time.Second
 	retryBaseMS       = 200 * time.Millisecond
 )
 
 var retryable = map[int]bool{429: true, 500: true, 502: true, 503: true, 504: true}
+
+// isPlanLimit reports whether an error body carries the API's plan-refusal
+// marker, in any of the three shapes the API uses.
+func isPlanLimit(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var probe struct {
+		Code      string          `json:"code"`
+		ErrorType string          `json:"error_type"`
+		Upgrade   json.RawMessage `json:"upgrade"`
+	}
+	if json.Unmarshal(raw, &probe) != nil {
+		return false
+	}
+	return probe.Code == "plan_limit_exceeded" ||
+		probe.ErrorType == "plan_limit_exceeded" ||
+		(len(probe.Upgrade) > 0 && string(probe.Upgrade) != "null")
+}
+
+func planLimitFrom(resp *http.Response, raw []byte) *PlanLimitError {
+	var body struct {
+		Error   string `json:"error"`
+		Upgrade struct {
+			CurrentPlanSlug string `json:"currentPlanSlug"`
+			Feature         string `json:"feature"`
+			CurrentPlan     struct {
+				Slug string `json:"slug"`
+			} `json:"current_plan"`
+			URLs struct {
+				Pricing string `json:"pricing"`
+			} `json:"urls"`
+		} `json:"upgrade"`
+	}
+	json.Unmarshal(raw, &body) //nolint:errcheck
+
+	e := &PlanLimitError{
+		Status:  resp.StatusCode,
+		Message: body.Error,
+		Feature: body.Upgrade.Feature,
+	}
+	if e.Message == "" {
+		e.Message = resp.Status
+	}
+	// Headers are authoritative; the offer body is the fallback when a proxy
+	// has stripped them.
+	e.Plan = resp.Header.Get("X-Misar-Plan")
+	if e.Plan == "" {
+		e.Plan = body.Upgrade.CurrentPlanSlug
+	}
+	if e.Plan == "" {
+		e.Plan = body.Upgrade.CurrentPlan.Slug
+	}
+	e.UpgradeURL = resp.Header.Get("X-Misar-Upgrade-Url")
+	if e.UpgradeURL == "" {
+		e.UpgradeURL = body.Upgrade.URLs.Pricing
+	}
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		if n, err := strconv.Atoi(ra); err == nil {
+			e.RetryAfter = n
+		}
+	}
+	return e
+}
 
 // ── Options ───────────────────────────────────────────────────────────────────
 
@@ -47,30 +112,39 @@ type Client struct {
 	maxRetries int
 	httpClient *http.Client
 
-	Email        *EmailResource
-	Contacts     *ContactsResource
-	Campaigns    *CampaignsResource
-	Templates    *TemplatesResource
-	Automations  *AutomationsResource
-	Domains      *DomainsResource
-	Aliases      *AliasesResource
-	DedicatedIPs *DedicatedIPsResource
-	Channels     *ChannelsResource
-	ABTests      *ABTestsResource
-	Sandbox      *SandboxResource
-	Inbound      *InboundResource
-	Analytics    *AnalyticsResource
-	Track        *TrackResource
-	Keys         *KeysResource
-	Validate     *ValidateResource
-	Leads        *LeadsResource
-	Autopilot    *AutopilotResource
-	SalesAgent   *SalesAgentResource
-	CRM          *CRMResource
-	Webhooks     *WebhooksResource
-	Usage        *UsageResource
-	Billing      *BillingResource
-	Workspaces   *WorkspacesResource
+	Email          *EmailResource
+	Contacts       *ContactsResource
+	Campaigns      *CampaignsResource
+	Templates      *TemplatesResource
+	Automations    *AutomationsResource
+	Domains        *DomainsResource
+	DedicatedIPs   *DedicatedIPsResource
+	ABTests        *ABTestsResource
+	Sandbox        *SandboxResource
+	Inbound        *InboundResource
+	Analytics      *AnalyticsResource
+	Track          *TrackResource
+	Keys           *KeysResource
+	Validate       *ValidateResource
+	Webhooks       *WebhooksResource
+	Usage          *UsageResource
+	Billing        *BillingResource
+	Plan           *PlanResource
+	Streaming      *StreamingResource
+	Ai             *AiResource
+	CreditRates    *CreditRatesResource
+	Deliverability *DeliverabilityResource
+	Dmarc          *DmarcResource
+	EmailAccounts  *EmailAccountsResource
+	Emails         *EmailsResource
+	LandingPages   *LandingPagesResource
+	Monetization   *MonetizationResource
+	Revenue        *RevenueResource
+	Segments       *SegmentsResource
+	Subscription   *SubscriptionResource
+	TeamMembers    *TeamMembersResource
+	Wallet         *WalletResource
+	Warmup         *WarmupResource
 }
 
 func New(apiKey string, opts ...Option) *Client {
@@ -90,9 +164,7 @@ func New(apiKey string, opts ...Option) *Client {
 	c.Templates = &TemplatesResource{c}
 	c.Automations = &AutomationsResource{c}
 	c.Domains = &DomainsResource{c}
-	c.Aliases = &AliasesResource{c}
 	c.DedicatedIPs = &DedicatedIPsResource{c}
-	c.Channels = &ChannelsResource{c}
 	c.ABTests = &ABTestsResource{c}
 	c.Sandbox = &SandboxResource{c}
 	c.Inbound = &InboundResource{c}
@@ -100,14 +172,25 @@ func New(apiKey string, opts ...Option) *Client {
 	c.Track = &TrackResource{c}
 	c.Keys = &KeysResource{c}
 	c.Validate = &ValidateResource{c}
-	c.Leads = &LeadsResource{c}
-	c.Autopilot = &AutopilotResource{c}
-	c.SalesAgent = &SalesAgentResource{c}
-	c.CRM = &CRMResource{c}
 	c.Webhooks = &WebhooksResource{c}
 	c.Usage = &UsageResource{c}
 	c.Billing = &BillingResource{c}
-	c.Workspaces = &WorkspacesResource{c}
+	c.Plan = &PlanResource{c}
+	c.Streaming = &StreamingResource{c}
+	c.Ai = &AiResource{c}
+	c.CreditRates = &CreditRatesResource{c}
+	c.Deliverability = &DeliverabilityResource{c}
+	c.Dmarc = &DmarcResource{c}
+	c.EmailAccounts = &EmailAccountsResource{c}
+	c.Emails = &EmailsResource{c}
+	c.LandingPages = &LandingPagesResource{c}
+	c.Monetization = &MonetizationResource{c}
+	c.Revenue = &RevenueResource{c}
+	c.Segments = &SegmentsResource{c}
+	c.Subscription = &SubscriptionResource{c}
+	c.TeamMembers = &TeamMembersResource{c}
+	c.Wallet = &WalletResource{c}
+	c.Warmup = &WarmupResource{c}
 	return c
 }
 
@@ -144,14 +227,23 @@ func (c *Client) do(ctx context.Context, method, fullURL string, body, out inter
 		}
 		defer resp.Body.Close() //nolint:gocritic
 
-		if retryable[resp.StatusCode] && attempt < c.maxRetries-1 {
-			io.Copy(io.Discard, resp.Body) //nolint:errcheck
-			time.Sleep(retryBaseMS * (1 << attempt))
-			continue
-		}
-
 		if resp.StatusCode == http.StatusNoContent {
 			return nil
+		}
+
+		// The body must be read before deciding whether to retry: a rate-limit
+		// 429 and a spent-allowance 429 are identical by status, and only the
+		// second is pointless to retry. Reading it once also avoids a second
+		// pass over a consumed stream.
+		raw, _ := io.ReadAll(resp.Body)
+
+		if isPlanLimit(raw) {
+			return planLimitFrom(resp, raw)
+		}
+
+		if retryable[resp.StatusCode] && attempt < c.maxRetries-1 {
+			time.Sleep(retryBaseMS * (1 << attempt))
+			continue
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -159,7 +251,7 @@ func (c *Client) do(ctx context.Context, method, fullURL string, body, out inter
 				Error   string `json:"error"`
 				Message string `json:"message"`
 			}
-			json.NewDecoder(resp.Body).Decode(&errBody) //nolint:errcheck
+			json.Unmarshal(raw, &errBody) //nolint:errcheck
 			msg := errBody.Error
 			if msg == "" {
 				msg = errBody.Message
@@ -170,8 +262,8 @@ func (c *Client) do(ctx context.Context, method, fullURL string, body, out inter
 			return &APIError{Status: resp.StatusCode, Message: msg}
 		}
 
-		if out != nil {
-			if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		if out != nil && len(raw) > 0 {
+			if err := json.Unmarshal(raw, out); err != nil {
 				return fmt.Errorf("misarmail: decode: %w", err)
 			}
 		}
@@ -251,52 +343,6 @@ func usageQuery(p *UsageParams) string {
 	}
 	if p.EndDate != "" {
 		q.Set("end_date", p.EndDate)
-	}
-	if s := q.Encode(); s != "" {
-		return "?" + s
-	}
-	return ""
-}
-
-func crmListQuery(p *CRMListParams) string {
-	if p == nil {
-		return ""
-	}
-	q := url.Values{}
-	if p.Page > 0 {
-		q.Set("page", fmt.Sprintf("%d", p.Page))
-	}
-	if p.Limit > 0 {
-		q.Set("limit", fmt.Sprintf("%d", p.Limit))
-	}
-	if p.Status != "" {
-		q.Set("status", p.Status)
-	}
-	if p.Search != "" {
-		q.Set("search", p.Search)
-	}
-	if s := q.Encode(); s != "" {
-		return "?" + s
-	}
-	return ""
-}
-
-func salesActionsQuery(p *SalesAgentActionsParams) string {
-	if p == nil {
-		return ""
-	}
-	q := url.Values{}
-	if p.Status != "" {
-		q.Set("status", p.Status)
-	}
-	if p.ContactID != "" {
-		q.Set("contact_id", p.ContactID)
-	}
-	if p.Page > 0 {
-		q.Set("page", fmt.Sprintf("%d", p.Page))
-	}
-	if p.Limit > 0 {
-		q.Set("limit", fmt.Sprintf("%d", p.Limit))
 	}
 	if s := q.Encode(); s != "" {
 		return "?" + s
@@ -447,60 +493,35 @@ func (r *AutomationsResource) Activate(ctx context.Context, id string, active bo
 }
 
 // ── Domains ───────────────────────────────────────────────────────────────────
+//
+// Served off /api, not /api/v1: dual-auth accepts an msk_ key there.
 
 type DomainsResource struct{ c *Client }
 
 func (r *DomainsResource) List(ctx context.Context) (*DomainsListResponse, error) {
 	var out DomainsListResponse
-	return &out, r.c.request(ctx, http.MethodGet, "/domains", nil, &out)
+	return &out, r.c.requestAPI(ctx, http.MethodGet, "/domains", nil, &out)
 }
 
 func (r *DomainsResource) Create(ctx context.Context, data *CreateDomainRequest) (*Domain, error) {
 	var out Domain
-	return &out, r.c.request(ctx, http.MethodPost, "/domains", data, &out)
+	return &out, r.c.requestAPI(ctx, http.MethodPost, "/domains", data, &out)
 }
 
 func (r *DomainsResource) Get(ctx context.Context, id string) (*Domain, error) {
 	var out Domain
-	return &out, r.c.request(ctx, http.MethodGet, "/domains/"+id, nil, &out)
+	return &out, r.c.requestAPI(ctx, http.MethodGet, "/domains/"+id, nil, &out)
 }
 
 func (r *DomainsResource) Verify(ctx context.Context, id string) (*DomainVerificationResponse, error) {
 	var out DomainVerificationResponse
-	return &out, r.c.request(ctx, http.MethodPost, "/domains/"+id+"/verify", nil, &out)
+	return &out, r.c.requestAPI(ctx, http.MethodPost, "/domains/"+id+"/verify", nil, &out)
 }
 
 func (r *DomainsResource) Delete(ctx context.Context, id string) error {
-	return r.c.request(ctx, http.MethodDelete, "/domains/"+id, nil, nil)
+	return r.c.requestAPI(ctx, http.MethodDelete, "/domains/"+id, nil, nil)
 }
 
-// ── Aliases ───────────────────────────────────────────────────────────────────
-
-type AliasesResource struct{ c *Client }
-
-func (r *AliasesResource) List(ctx context.Context) (*AliasesListResponse, error) {
-	var out AliasesListResponse
-	return &out, r.c.request(ctx, http.MethodGet, "/aliases", nil, &out)
-}
-
-func (r *AliasesResource) Create(ctx context.Context, data *CreateAliasRequest) (*Alias, error) {
-	var out Alias
-	return &out, r.c.request(ctx, http.MethodPost, "/aliases", data, &out)
-}
-
-func (r *AliasesResource) Get(ctx context.Context, id string) (*Alias, error) {
-	var out Alias
-	return &out, r.c.request(ctx, http.MethodGet, "/aliases/"+id, nil, &out)
-}
-
-func (r *AliasesResource) Update(ctx context.Context, id string, data *UpdateAliasRequest) (*Alias, error) {
-	var out Alias
-	return &out, r.c.request(ctx, http.MethodPatch, "/aliases/"+id, data, &out)
-}
-
-func (r *AliasesResource) Delete(ctx context.Context, id string) error {
-	return r.c.request(ctx, http.MethodDelete, "/aliases/"+id, nil, nil)
-}
 
 // ── Dedicated IPs ─────────────────────────────────────────────────────────────
 
@@ -523,20 +544,6 @@ func (r *DedicatedIPsResource) Update(ctx context.Context, id string, data *Upda
 
 func (r *DedicatedIPsResource) Delete(ctx context.Context, id string) error {
 	return r.c.request(ctx, http.MethodDelete, "/dedicated-ips/"+id, nil, nil)
-}
-
-// ── Channels ──────────────────────────────────────────────────────────────────
-
-type ChannelsResource struct{ c *Client }
-
-func (r *ChannelsResource) SendWhatsApp(ctx context.Context, data *WhatsAppMessage) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	return out, r.c.request(ctx, http.MethodPost, "/channels/whatsapp/send", data, &out)
-}
-
-func (r *ChannelsResource) SendPush(ctx context.Context, data *PushNotification) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	return out, r.c.request(ctx, http.MethodPost, "/channels/push/send", data, &out)
 }
 
 // ── A/B Tests ─────────────────────────────────────────────────────────────────
@@ -611,7 +618,7 @@ type AnalyticsResource struct{ c *Client }
 
 func (r *AnalyticsResource) Overview(ctx context.Context, params *AnalyticsParams) (*AnalyticsOverviewResponse, error) {
 	var out AnalyticsOverviewResponse
-	return &out, r.c.request(ctx, http.MethodGet, "/analytics/overview"+analyticsQuery(params), nil, &out)
+	return &out, r.c.request(ctx, http.MethodGet, "/analytics"+analyticsQuery(params), nil, &out)
 }
 
 // ── Track ─────────────────────────────────────────────────────────────────────
@@ -658,157 +665,7 @@ type ValidateResource struct{ c *Client }
 func (r *ValidateResource) Email(ctx context.Context, address string) (*ValidateEmailResponse, error) {
 	var out ValidateEmailResponse
 	q := "?email=" + url.QueryEscape(address)
-	return &out, r.c.request(ctx, http.MethodGet, "/validate/email"+q, nil, &out)
-}
-
-// ── Leads ─────────────────────────────────────────────────────────────────────
-
-type LeadsResource struct{ c *Client }
-
-func (r *LeadsResource) Search(ctx context.Context, data *LeadSearchRequest) (*LeadJob, error) {
-	var out LeadJob
-	return &out, r.c.request(ctx, http.MethodPost, "/leads/search", data, &out)
-}
-
-func (r *LeadsResource) GetJob(ctx context.Context, id string) (*LeadJob, error) {
-	var out LeadJob
-	return &out, r.c.request(ctx, http.MethodGet, "/leads/jobs/"+id, nil, &out)
-}
-
-func (r *LeadsResource) ListJobs(ctx context.Context, params *ListParams) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	return out, r.c.request(ctx, http.MethodGet, "/leads/jobs"+listQuery(params), nil, &out)
-}
-
-func (r *LeadsResource) Results(ctx context.Context, jobID string) ([]*LeadResult, error) {
-	var wrapper struct {
-		Data []*LeadResult `json:"data"`
-	}
-	if err := r.c.request(ctx, http.MethodGet, "/leads/jobs/"+jobID+"/results", nil, &wrapper); err != nil {
-		return nil, err
-	}
-	return wrapper.Data, nil
-}
-
-func (r *LeadsResource) Import(ctx context.Context, data *LeadImportRequest) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	return out, r.c.request(ctx, http.MethodPost, "/leads/import", data, &out)
-}
-
-func (r *LeadsResource) Credits(ctx context.Context) (*CreditsResponse, error) {
-	var out CreditsResponse
-	return &out, r.c.request(ctx, http.MethodGet, "/leads/credits", nil, &out)
-}
-
-// ── Autopilot ─────────────────────────────────────────────────────────────────
-
-type AutopilotResource struct{ c *Client }
-
-func (r *AutopilotResource) Start(ctx context.Context, data *AutopilotRequest) (*AutopilotSession, error) {
-	var out AutopilotSession
-	return &out, r.c.request(ctx, http.MethodPost, "/autopilot/start", data, &out)
-}
-
-func (r *AutopilotResource) Get(ctx context.Context, id string) (*AutopilotSession, error) {
-	var out AutopilotSession
-	return &out, r.c.request(ctx, http.MethodGet, "/autopilot/"+id, nil, &out)
-}
-
-func (r *AutopilotResource) List(ctx context.Context, params *ListParams) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	return out, r.c.request(ctx, http.MethodGet, "/autopilot"+listQuery(params), nil, &out)
-}
-
-func (r *AutopilotResource) DailyPlan(ctx context.Context) (*AutopilotDailyPlan, error) {
-	var out AutopilotDailyPlan
-	return &out, r.c.request(ctx, http.MethodGet, "/autopilot/daily-plan", nil, &out)
-}
-
-// ── Sales Agent ───────────────────────────────────────────────────────────────
-
-type SalesAgentResource struct{ c *Client }
-
-func (r *SalesAgentResource) GetConfig(ctx context.Context) (*SalesAgentConfig, error) {
-	var out SalesAgentConfig
-	return &out, r.c.request(ctx, http.MethodGet, "/sales-agent/config", nil, &out)
-}
-
-func (r *SalesAgentResource) UpdateConfig(ctx context.Context, data *UpdateSalesAgentConfigRequest) (*SalesAgentConfig, error) {
-	var out SalesAgentConfig
-	return &out, r.c.request(ctx, http.MethodPatch, "/sales-agent/config", data, &out)
-}
-
-func (r *SalesAgentResource) GetActions(ctx context.Context, params *SalesAgentActionsParams) ([]*SalesAgentAction, error) {
-	var wrapper struct {
-		Data []*SalesAgentAction `json:"data"`
-	}
-	if err := r.c.request(ctx, http.MethodGet, "/sales-agent/actions"+salesActionsQuery(params), nil, &wrapper); err != nil {
-		return nil, err
-	}
-	return wrapper.Data, nil
-}
-
-// ── CRM ───────────────────────────────────────────────────────────────────────
-
-type CRMResource struct{ c *Client }
-
-func (r *CRMResource) ListConversations(ctx context.Context, params *CRMListParams) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	return out, r.c.request(ctx, http.MethodGet, "/crm/conversations"+crmListQuery(params), nil, &out)
-}
-
-func (r *CRMResource) GetConversation(ctx context.Context, id string) (*CRMConversation, error) {
-	var out CRMConversation
-	return &out, r.c.request(ctx, http.MethodGet, "/crm/conversations/"+id, nil, &out)
-}
-
-func (r *CRMResource) UpdateConversation(ctx context.Context, id string, data map[string]interface{}) (*CRMConversation, error) {
-	var out CRMConversation
-	return &out, r.c.request(ctx, http.MethodPatch, "/crm/conversations/"+id, data, &out)
-}
-
-func (r *CRMResource) ListMessages(ctx context.Context, conversationID string) ([]*CRMMessage, error) {
-	var wrapper struct {
-		Data []*CRMMessage `json:"data"`
-	}
-	if err := r.c.request(ctx, http.MethodGet, "/crm/conversations/"+conversationID+"/messages", nil, &wrapper); err != nil {
-		return nil, err
-	}
-	return wrapper.Data, nil
-}
-
-func (r *CRMResource) ListDeals(ctx context.Context, params *CRMListParams) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	return out, r.c.request(ctx, http.MethodGet, "/crm/deals"+crmListQuery(params), nil, &out)
-}
-
-func (r *CRMResource) CreateDeal(ctx context.Context, data *CreateDealRequest) (*CRMDeal, error) {
-	var out CRMDeal
-	return &out, r.c.request(ctx, http.MethodPost, "/crm/deals", data, &out)
-}
-
-func (r *CRMResource) GetDeal(ctx context.Context, id string) (*CRMDeal, error) {
-	var out CRMDeal
-	return &out, r.c.request(ctx, http.MethodGet, "/crm/deals/"+id, nil, &out)
-}
-
-func (r *CRMResource) UpdateDeal(ctx context.Context, id string, data *UpdateDealRequest) (*CRMDeal, error) {
-	var out CRMDeal
-	return &out, r.c.request(ctx, http.MethodPatch, "/crm/deals/"+id, data, &out)
-}
-
-func (r *CRMResource) DeleteDeal(ctx context.Context, id string) error {
-	return r.c.request(ctx, http.MethodDelete, "/crm/deals/"+id, nil, nil)
-}
-
-func (r *CRMResource) ListClients(ctx context.Context, params *CRMListParams) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	return out, r.c.request(ctx, http.MethodGet, "/crm/clients"+crmListQuery(params), nil, &out)
-}
-
-func (r *CRMResource) CreateClient(ctx context.Context, data *CreateClientRequest) (*CRMClient, error) {
-	var out CRMClient
-	return &out, r.c.request(ctx, http.MethodPost, "/crm/clients", data, &out)
+	return &out, r.c.request(ctx, http.MethodGet, "/validate"+q, nil, &out)
 }
 
 // ── Webhooks ──────────────────────────────────────────────────────────────────
@@ -867,54 +724,30 @@ func (r *BillingResource) Checkout(ctx context.Context, data *BillingCheckoutReq
 	return &out, r.c.requestAPI(ctx, http.MethodPost, "/billing/checkout", data, &out)
 }
 
-// ── Workspaces ────────────────────────────────────────────────────────────────
+// Workspaces and Aliases are intentionally absent.
+//
+// Both are served only at /api/workspaces and /api/aliases, and both import
+// supabase/server and authenticate with a cookie session — no dual-auth path,
+// no verifyApiKey. An msk_ key can never call them, so a method here would fail
+// unconditionally. (workspaces has no /[id] route at all, only /settings and
+// /members.) Restore from git history if those routes gain key auth.
 
-type WorkspacesResource struct{ c *Client }
+// PlanResource reads the live subscription standing for the key's owner.
+//
+// Read this before an expensive call rather than discovering the ceiling
+// through a *PlanLimitError: Usage reports every metered feature and Upgrade is
+// non-nil as soon as one of them is spent.
+type PlanResource struct{ c *Client }
 
-func (r *WorkspacesResource) List(ctx context.Context) (*WorkspacesListResponse, error) {
-	var out WorkspacesListResponse
-	return &out, r.c.requestAPI(ctx, http.MethodGet, "/workspaces", nil, &out)
+// Get calls GET /plan — plan, sending allowances, per-feature usage and the
+// upgrade offer.
+func (r *PlanResource) Get(ctx context.Context) (*PlanResponse, error) {
+	var out PlanResponse
+	return &out, r.c.request(ctx, http.MethodGet, "/plan", nil, &out)
 }
 
-func (r *WorkspacesResource) Create(ctx context.Context, data *CreateWorkspaceRequest) (*Workspace, error) {
-	var out Workspace
-	return &out, r.c.requestAPI(ctx, http.MethodPost, "/workspaces", data, &out)
-}
-
-func (r *WorkspacesResource) Get(ctx context.Context, id string) (*Workspace, error) {
-	var out Workspace
-	return &out, r.c.requestAPI(ctx, http.MethodGet, "/workspaces/"+id, nil, &out)
-}
-
-func (r *WorkspacesResource) Update(ctx context.Context, id string, data *UpdateWorkspaceRequest) (*Workspace, error) {
-	var out Workspace
-	return &out, r.c.requestAPI(ctx, http.MethodPatch, "/workspaces/"+id, data, &out)
-}
-
-func (r *WorkspacesResource) Delete(ctx context.Context, id string) error {
-	return r.c.requestAPI(ctx, http.MethodDelete, "/workspaces/"+id, nil, nil)
-}
-
-func (r *WorkspacesResource) ListMembers(ctx context.Context, wsID string) ([]*WorkspaceMember, error) {
-	var wrapper struct {
-		Data []*WorkspaceMember `json:"data"`
-	}
-	if err := r.c.requestAPI(ctx, http.MethodGet, "/workspaces/"+wsID+"/members", nil, &wrapper); err != nil {
-		return nil, err
-	}
-	return wrapper.Data, nil
-}
-
-func (r *WorkspacesResource) InviteMember(ctx context.Context, wsID string, data *InviteMemberRequest) (*WorkspaceMember, error) {
-	var out WorkspaceMember
-	return &out, r.c.requestAPI(ctx, http.MethodPost, "/workspaces/"+wsID+"/members", data, &out)
-}
-
-func (r *WorkspacesResource) UpdateMember(ctx context.Context, wsID, userID string, data *UpdateMemberRequest) (*WorkspaceMember, error) {
-	var out WorkspaceMember
-	return &out, r.c.requestAPI(ctx, http.MethodPatch, "/workspaces/"+wsID+"/members/"+userID, data, &out)
-}
-
-func (r *WorkspacesResource) RemoveMember(ctx context.Context, wsID, userID string) error {
-	return r.c.requestAPI(ctx, http.MethodDelete, "/workspaces/"+wsID+"/members/"+userID, nil, nil)
+// Monetization calls GET /monetization/stats.
+func (r *PlanResource) Monetization(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	return out, r.c.request(ctx, http.MethodGet, "/monetization/stats", nil, &out)
 }

@@ -6,19 +6,81 @@ from typing import Any, Optional
 
 import httpx
 
-from .errors import MisarMailError, MisarMailNetworkError
+from .errors import MisarMailError, MisarMailNetworkError, MisarMailPlanLimitError
 
 __all__ = ["MisarMailClient"]
 
-DEFAULT_BASE_URL = "https://mail.misar.io/api/v1"
+DEFAULT_BASE_URL = "https://api.misar.io/mail/v1"
 RETRY_BASE_S = 0.2
 RETRYABLE = {429, 500, 502, 503, 504}
+
+
+def _decode(resp) -> dict:
+    try:
+        return resp.json() if resp.content else {}
+    except ValueError:
+        return {}
+
+
+def _is_plan_limit(data: dict) -> bool:
+    """A plan refusal, not a rate limit — retrying it cannot help."""
+    return (
+        data.get("code") == "plan_limit_exceeded"
+        or data.get("error_type") == "plan_limit_exceeded"
+        or isinstance(data.get("upgrade"), dict)
+    )
 
 
 def _clean(d: dict | None) -> dict | None:
     if d is None:
         return None
     return {k: v for k, v in d.items() if v is not None}
+
+
+# ── SSE parsing ────────────────────────────────────────────────────────────────
+
+_DONE = object()
+"""Sentinel for the ``data: [DONE]`` frame that ends a MisarMail stream."""
+
+
+def _frame_end(buffer: str) -> int:
+    """Index of the blank line ending the first complete frame, or -1."""
+    lf = buffer.find("\n\n")
+    crlf = buffer.find("\r\n\r\n")
+    if lf == -1:
+        return crlf
+    if crlf == -1:
+        return lf
+    return min(lf, crlf)
+
+
+def _parse_sse_frame(frame: str):
+    """Decode one SSE frame.
+
+    Returns the payload, ``_DONE`` for the terminating sentinel, or ``None`` for
+    a keepalive comment or an empty frame.
+    """
+    import json as _json
+
+    event = None
+    data_lines = []
+    for line in frame.replace("\r\n", "\n").split("\n"):
+        if not line or line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+    if not data_lines:
+        return None
+    raw = "\n".join(data_lines)
+    if raw == "[DONE]":
+        return _DONE
+    try:
+        decoded = _json.loads(raw)
+    except ValueError:
+        decoded = raw
+    return {"data": decoded, "event": event} if event else decoded
 
 
 class _MisarMailCore:
@@ -55,11 +117,20 @@ class _MisarMailCore:
                     timeout=self._timeout,
                 )
                 status = resp.status_code
+                data = {} if resp.is_success else _decode(resp)
+                # The body must be read before deciding to retry: a rate-limit
+                # 429 and a spent-allowance 429 are identical by status.
+                if _is_plan_limit(data):
+                    raise MisarMailPlanLimitError(
+                        status,
+                        data.get("error") or "plan limit exceeded",
+                        data,
+                        dict(resp.headers),
+                    )
                 if status in RETRYABLE and attempt < self._max_retries - 1:
                     time.sleep(RETRY_BASE_S * (2**attempt))
                     continue
                 if not resp.is_success:
-                    data = resp.json() if resp.content else {}
                     raise MisarMailError(
                         status,
                         data.get("error") or resp.reason_phrase or "unknown error",
@@ -102,11 +173,20 @@ class _MisarMailCore:
                         json=body,
                     )
                     status = resp.status_code
+                    data = {} if resp.is_success else _decode(resp)
+                    # The body must be read before deciding to retry: a rate-limit
+                    # 429 and a spent-allowance 429 are identical by status.
+                    if _is_plan_limit(data):
+                        raise MisarMailPlanLimitError(
+                            status,
+                            data.get("error") or "plan limit exceeded",
+                            data,
+                            dict(resp.headers),
+                        )
                     if status in RETRYABLE and attempt < self._max_retries - 1:
                         await asyncio.sleep(RETRY_BASE_S * (2**attempt))
                         continue
                     if not resp.is_success:
-                        data = resp.json() if resp.content else {}
                         raise MisarMailError(
                             status,
                             data.get("error") or resp.reason_phrase or "unknown error",
@@ -122,6 +202,72 @@ class _MisarMailCore:
                     raise MisarMailNetworkError(str(exc), exc) from exc
         raise MisarMailNetworkError("max retries exceeded", last_exc)
 
+
+
+    def _sse_frames(self, method: str, path: str, body: Optional[dict] = None):
+        """Yield decoded SSE frames from a streaming endpoint.
+
+        Both MisarMail streams live outside ``/v1``, so this uses the API base.
+        Frames end at a blank line, may span several ``data:`` lines, and the
+        stream terminates at the ``[DONE]`` sentinel, which is consumed here
+        rather than yielded.
+
+        Deliberately not retried: replaying a stream that failed mid-flight
+        would duplicate whatever the caller already consumed.
+        """
+        import json as _json
+
+        url = self._api_base + path
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json",
+        }
+        try:
+            with httpx.stream(
+                method, url, headers=headers, json=body, timeout=self._timeout
+            ) as resp:
+                if not resp.is_success:
+                    raw = resp.read().decode("utf-8", "replace")
+                    try:
+                        data = _json.loads(raw) if raw else {}
+                    except ValueError:
+                        data = {}
+                    if not isinstance(data, dict):
+                        data = {}
+                    if _is_plan_limit(data):
+                        raise MisarMailPlanLimitError(
+                            resp.status_code,
+                            data.get("error") or "plan limit exceeded",
+                            data,
+                            dict(resp.headers),
+                        )
+                    raise MisarMailError(
+                        resp.status_code,
+                        data.get("error") or raw or "stream error",
+                    )
+
+                buffer = ""
+                for chunk in resp.iter_text():
+                    buffer += chunk
+                    while True:
+                        end = _frame_end(buffer)
+                        if end == -1:
+                            break
+                        frame = buffer[:end]
+                        buffer = buffer[end:].lstrip("\r\n")
+                        parsed = _parse_sse_frame(frame)
+                        if parsed is _DONE:
+                            return
+                        if parsed is not None:
+                            yield parsed
+                tail = _parse_sse_frame(buffer)
+                if tail is not None and tail is not _DONE:
+                    yield tail
+        except MisarMailError:
+            raise
+        except Exception as exc:
+            raise MisarMailNetworkError(str(exc), exc) from exc
 
 class _Resource:
     def __init__(self, client: _MisarMailCore) -> None:
@@ -154,22 +300,33 @@ class _ContactsResource(_Resource):
         return await self._c._arequest("POST", "/contacts", data)
 
     def get(self, id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/contacts/{id}")
+        """``GET /contacts?id=<uuid>``.
+
+        The id is a query parameter, not a path segment: /v1/contacts has no
+        dynamic route, so /contacts/<id> is a 404.
+        """
+        return self._c._request("GET", f"/contacts?id={quote(id, safe='')}")
 
     async def aget(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/contacts/{id}")
+        return await self._c._arequest("GET", f"/contacts?id={quote(id, safe='')}")
 
-    def update(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("PATCH", f"/contacts/{id}", data)
+    def update(self, email: str, data: dict[str, Any]) -> dict[str, Any]:
+        """``PATCH /contacts`` — the contact is identified by ``email`` in the body.
 
-    async def aupdate(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("PATCH", f"/contacts/{id}", data)
+        Not by id, and not by a path segment. Passing an id here silently failed
+        validation, since the schema requires a valid email address.
+        """
+        return self._c._request("PATCH", "/contacts", {**data, "email": email})
+
+    async def aupdate(self, email: str, data: dict[str, Any]) -> dict[str, Any]:
+        return await self._c._arequest("PATCH", "/contacts", {**data, "email": email})
 
     def delete(self, id: str) -> dict[str, Any]:
-        return self._c._request("DELETE", f"/contacts/{id}")
+        """``DELETE /contacts?id=<uuid>`` — query parameter, not a path segment."""
+        return self._c._request("DELETE", f"/contacts?id={quote(id, safe='')}")
 
     async def adelete(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("DELETE", f"/contacts/{id}")
+        return await self._c._arequest("DELETE", f"/contacts?id={quote(id, safe='')}")
 
     def import_contacts(self, data: dict[str, Any]) -> dict[str, Any]:
         return self._c._request("POST", "/contacts/import", data)
@@ -302,71 +459,38 @@ class _AutomationsResource(_Resource):
 
 class _DomainsResource(_Resource):
     def list(self) -> dict[str, Any]:
-        return self._c._request("GET", "/domains")
+        return self._c._request("GET", "/domains", use_api_base=True)
 
     async def alist(self) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/domains")
+        return await self._c._arequest("GET", "/domains", use_api_base=True)
 
     def create(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/domains", data)
+        return self._c._request("POST", "/domains", data, use_api_base=True)
 
     async def acreate(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/domains", data)
+        return await self._c._arequest("POST", "/domains", data, use_api_base=True)
 
     def get(self, id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/domains/{id}")
+        return self._c._request("GET", f"/domains/{id}", use_api_base=True)
 
     async def aget(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/domains/{id}")
+        return await self._c._arequest("GET", f"/domains/{id}", use_api_base=True)
 
     def verify(self, id: str) -> dict[str, Any]:
-        return self._c._request("POST", f"/domains/{id}/verify", {})
+        return self._c._request("POST", f"/domains/{id}/verify", {}, use_api_base=True)
 
     async def averify(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("POST", f"/domains/{id}/verify", {})
+        return await self._c._arequest("POST", f"/domains/{id}/verify", {}, use_api_base=True)
 
     def delete(self, id: str) -> dict[str, Any]:
-        return self._c._request("DELETE", f"/domains/{id}")
+        return self._c._request("DELETE", f"/domains/{id}", use_api_base=True)
 
     async def adelete(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("DELETE", f"/domains/{id}")
+        return await self._c._arequest("DELETE", f"/domains/{id}", use_api_base=True)
 
 
 # ── Aliases ────────────────────────────────────────────────────────────────────
 
-class _AliasesResource(_Resource):
-    def list(self) -> dict[str, Any]:
-        return self._c._request("GET", "/aliases")
-
-    async def alist(self) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/aliases")
-
-    def create(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/aliases", data)
-
-    async def acreate(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/aliases", data)
-
-    def get(self, id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/aliases/{id}")
-
-    async def aget(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/aliases/{id}")
-
-    def update(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("PATCH", f"/aliases/{id}", data)
-
-    async def aupdate(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("PATCH", f"/aliases/{id}", data)
-
-    def delete(self, id: str) -> dict[str, Any]:
-        return self._c._request("DELETE", f"/aliases/{id}")
-
-    async def adelete(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("DELETE", f"/aliases/{id}")
-
-
-# ── Dedicated IPs ──────────────────────────────────────────────────────────────
 
 class _DedicatedIPsResource(_Resource):
     def list(self) -> dict[str, Any]:
@@ -392,22 +516,6 @@ class _DedicatedIPsResource(_Resource):
 
     async def adelete(self, id: str) -> dict[str, Any]:
         return await self._c._arequest("DELETE", f"/dedicated-ips/{id}")
-
-
-# ── Channels ───────────────────────────────────────────────────────────────────
-
-class _ChannelsResource(_Resource):
-    def send_whatsapp(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/channels/whatsapp/send", data)
-
-    async def asend_whatsapp(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/channels/whatsapp/send", data)
-
-    def send_push(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/channels/push/send", data)
-
-    async def asend_push(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/channels/push/send", data)
 
 
 # ── A/B Tests ──────────────────────────────────────────────────────────────────
@@ -500,7 +608,7 @@ class _AnalyticsResource(_Resource):
     ) -> dict[str, Any]:
         return self._c._request(
             "GET",
-            "/analytics/overview",
+            "/analytics",
             params={"start_date": start_date, "end_date": end_date, "campaign_id": campaign_id, "group_by": group_by},
         )
 
@@ -513,7 +621,7 @@ class _AnalyticsResource(_Resource):
     ) -> dict[str, Any]:
         return await self._c._arequest(
             "GET",
-            "/analytics/overview",
+            "/analytics",
             params={"start_date": start_date, "end_date": end_date, "campaign_id": campaign_id, "group_by": group_by},
         )
 
@@ -566,190 +674,10 @@ class _KeysResource(_Resource):
 
 class _ValidateResource(_Resource):
     def email(self, address: str) -> dict[str, Any]:
-        return self._c._request("GET", "/validate/email", params={"address": address})
+        return self._c._request("GET", "/validate", params={"address": address})
 
     async def aemail(self, address: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/validate/email", params={"address": address})
-
-
-# ── Leads ──────────────────────────────────────────────────────────────────────
-
-class _LeadsResource(_Resource):
-    def search(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/leads/search", data)
-
-    async def asearch(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/leads/search", data)
-
-    def get_job(self, id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/leads/jobs/{id}")
-
-    async def aget_job(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/leads/jobs/{id}")
-
-    def list_jobs(self, page: int | None = None) -> dict[str, Any]:
-        return self._c._request("GET", "/leads/jobs", params={"page": page})
-
-    async def alist_jobs(self, page: int | None = None) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/leads/jobs", params={"page": page})
-
-    def results(self, job_id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/leads/jobs/{job_id}/results")
-
-    async def aresults(self, job_id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/leads/jobs/{job_id}/results")
-
-    def import_leads(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/leads/import", data)
-
-    async def aimport_leads(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/leads/import", data)
-
-    def credits(self) -> dict[str, Any]:
-        return self._c._request("GET", "/leads/credits")
-
-    async def acredits(self) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/leads/credits")
-
-
-# ── Autopilot ──────────────────────────────────────────────────────────────────
-
-class _AutopilotResource(_Resource):
-    def start(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/autopilot", data)
-
-    async def astart(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/autopilot", data)
-
-    def get(self, id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/autopilot/{id}")
-
-    async def aget(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/autopilot/{id}")
-
-    def list(self, page: int | None = None) -> dict[str, Any]:
-        return self._c._request("GET", "/autopilot", params={"page": page})
-
-    async def alist(self, page: int | None = None) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/autopilot", params={"page": page})
-
-    def daily_plan(self) -> dict[str, Any]:
-        return self._c._request("GET", "/autopilot/daily-plan")
-
-    async def adaily_plan(self) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/autopilot/daily-plan")
-
-
-# ── Sales Agent ────────────────────────────────────────────────────────────────
-
-class _SalesAgentResource(_Resource):
-    def get_config(self) -> dict[str, Any]:
-        return self._c._request("GET", "/sales-agent/config")
-
-    async def aget_config(self) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/sales-agent/config")
-
-    def update_config(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("PATCH", "/sales-agent/config", data)
-
-    async def aupdate_config(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("PATCH", "/sales-agent/config", data)
-
-    def get_actions(self, page: int | None = None) -> dict[str, Any]:
-        return self._c._request("GET", "/sales-agent/actions", params={"page": page})
-
-    async def aget_actions(self, page: int | None = None) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/sales-agent/actions", params={"page": page})
-
-
-# ── CRM ────────────────────────────────────────────────────────────────────────
-
-class _CRMResource(_Resource):
-    def list_conversations(
-        self,
-        status: str | None = None,
-        channel: str | None = None,
-        campaign_id: str | None = None,
-        page: int | None = None,
-    ) -> dict[str, Any]:
-        return self._c._request(
-            "GET",
-            "/crm/conversations",
-            params={"status": status, "channel": channel, "campaign_id": campaign_id, "page": page},
-        )
-
-    async def alist_conversations(
-        self,
-        status: str | None = None,
-        channel: str | None = None,
-        campaign_id: str | None = None,
-        page: int | None = None,
-    ) -> dict[str, Any]:
-        return await self._c._arequest(
-            "GET",
-            "/crm/conversations",
-            params={"status": status, "channel": channel, "campaign_id": campaign_id, "page": page},
-        )
-
-    def get_conversation(self, id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/crm/conversations/{id}")
-
-    async def aget_conversation(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/crm/conversations/{id}")
-
-    def update_conversation(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("PATCH", f"/crm/conversations/{id}", data)
-
-    async def aupdate_conversation(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("PATCH", f"/crm/conversations/{id}", data)
-
-    def list_messages(self, conversation_id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/crm/conversations/{conversation_id}/messages")
-
-    async def alist_messages(self, conversation_id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/crm/conversations/{conversation_id}/messages")
-
-    def list_deals(self, page: int | None = None) -> dict[str, Any]:
-        return self._c._request("GET", "/crm/deals", params={"page": page})
-
-    async def alist_deals(self, page: int | None = None) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/crm/deals", params={"page": page})
-
-    def create_deal(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/crm/deals", data)
-
-    async def acreate_deal(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/crm/deals", data)
-
-    def get_deal(self, id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/crm/deals/{id}")
-
-    async def aget_deal(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/crm/deals/{id}")
-
-    def update_deal(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("PATCH", f"/crm/deals/{id}", data)
-
-    async def aupdate_deal(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("PATCH", f"/crm/deals/{id}", data)
-
-    def delete_deal(self, id: str) -> dict[str, Any]:
-        return self._c._request("DELETE", f"/crm/deals/{id}")
-
-    async def adelete_deal(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("DELETE", f"/crm/deals/{id}")
-
-    def list_clients(self, page: int | None = None) -> dict[str, Any]:
-        return self._c._request("GET", "/crm/clients", params={"page": page})
-
-    async def alist_clients(self, page: int | None = None) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/crm/clients", params={"page": page})
-
-    def create_client(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/crm/clients", data)
-
-    async def acreate_client(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/crm/clients", data)
+        return await self._c._arequest("GET", "/validate", params={"address": address})
 
 
 # ── Webhooks ───────────────────────────────────────────────────────────────────
@@ -820,63 +748,289 @@ class _BillingResource(_Resource):
 
 # ── Workspaces ─────────────────────────────────────────────────────────────────
 
-class _WorkspacesResource(_Resource):
+
+class _PlanResource(_Resource):
+    """Live subscription standing for the key's owner.
+
+    Read this before an expensive call rather than discovering the ceiling
+    through a MisarMailPlanLimitError. ``usage`` reports every metered feature
+    and ``upgrade`` is non-null as soon as one of them is spent.
+    """
+
+    def get(self) -> dict[str, Any]:
+        """GET /plan — plan, sending allowances, per-feature usage, upgrade offer."""
+        return self._c._request("GET", "/plan")
+
+    async def aget(self) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/plan")
+
+    def limits(self, product: Optional[str] = None) -> dict[str, Any]:
+        """GET /plan-limits"""
+        return self._c._request("GET", "/plan-limits", params={"product": product})
+
+    async def alimits(self, product: Optional[str] = None) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/plan-limits", params={"product": product})
+
+    def monetization(self) -> dict[str, Any]:
+        """GET /monetization/stats — revenue and monetization counters."""
+        return self._c._request("GET", "/monetization/stats")
+
+    async def amonetization(self) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/monetization/stats")
+
+
+# ── Generated from scripts/sdk-endpoint-spec.json ─────────────────────────────
+
+class _AiResource(_Resource):
+    """ai — generated from scripts/sdk-endpoint-spec.json."""
+
+    def subject_lines(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /ai/subject-lines"""
+        return self._c._request("POST", "/ai/subject-lines", data or {})
+
+    async def asubject_lines(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/ai/subject-lines", data or {})
+
+
+class _CreditRatesResource(_Resource):
+    """creditRates — generated from scripts/sdk-endpoint-spec.json."""
+
     def list(self) -> dict[str, Any]:
-        return self._c._request("GET", "/workspaces", use_api_base=True)
+        """GET /credit-rates"""
+        return self._c._request("GET", "/credit-rates")
 
     async def alist(self) -> dict[str, Any]:
-        return await self._c._arequest("GET", "/workspaces", use_api_base=True)
+        return await self._c._arequest("GET", "/credit-rates")
 
-    def create(self, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", "/workspaces", data, use_api_base=True)
 
-    async def acreate(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", "/workspaces", data, use_api_base=True)
+class _DeliverabilityResource(_Resource):
+    """deliverability — generated from scripts/sdk-endpoint-spec.json."""
+
+    def audit(self) -> dict[str, Any]:
+        """GET /deliverability/audit"""
+        return self._c._request("GET", "/deliverability/audit")
+
+    async def aaudit(self) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/deliverability/audit")
+
+    def score(self) -> dict[str, Any]:
+        """GET /deliverability/score"""
+        return self._c._request("GET", "/deliverability/score")
+
+    async def ascore(self) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/deliverability/score")
+
+
+class _DmarcResource(_Resource):
+    """dmarc — generated from scripts/sdk-endpoint-spec.json."""
+
+    def check(self, domain: Optional[str] = None, dkim_selector: Optional[str] = None) -> dict[str, Any]:
+        """GET /dmarc/check"""
+        return self._c._request("GET", "/dmarc/check", params={"domain": domain, "dkim_selector": dkim_selector})
+
+    async def acheck(self, domain: Optional[str] = None, dkim_selector: Optional[str] = None) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/dmarc/check", params={"domain": domain, "dkim_selector": dkim_selector})
+
+    def list_domains(self) -> dict[str, Any]:
+        """GET /dmarc/domains"""
+        return self._c._request("GET", "/dmarc/domains")
+
+    async def alist_domains(self) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/dmarc/domains")
+
+    def add_domain(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /dmarc/domains"""
+        return self._c._request("POST", "/dmarc/domains", data or {})
+
+    async def aadd_domain(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/dmarc/domains", data or {})
+
+    def remove_domain(self, domain_id: Optional[str] = None) -> dict[str, Any]:
+        """DELETE /dmarc/domains"""
+        return self._c._request("DELETE", "/dmarc/domains", params={"domain_id": domain_id})
+
+    async def aremove_domain(self, domain_id: Optional[str] = None) -> dict[str, Any]:
+        return await self._c._arequest("DELETE", "/dmarc/domains", params={"domain_id": domain_id})
+
+
+class _EmailAccountsResource(_Resource):
+    """emailAccounts — generated from scripts/sdk-endpoint-spec.json."""
+
+    def list(self) -> dict[str, Any]:
+        """GET /email-accounts"""
+        return self._c._request("GET", "/email-accounts")
+
+    async def alist(self) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/email-accounts")
+
+
+class _EmailsResource(_Resource):
+    """emails — generated from scripts/sdk-endpoint-spec.json."""
+
+    def list(self, folder: Optional[str] = None, search: Optional[str] = None, limit: Optional[int] = None) -> dict[str, Any]:
+        """GET /emails"""
+        return self._c._request("GET", "/emails", params={"folder": folder, "search": search, "limit": limit})
+
+    async def alist(self, folder: Optional[str] = None, search: Optional[str] = None, limit: Optional[int] = None) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/emails", params={"folder": folder, "search": search, "limit": limit})
 
     def get(self, id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/workspaces/{id}", use_api_base=True)
+        """GET /emails/:id"""
+        return self._c._request("GET", f"/emails/{id}")
 
     async def aget(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/workspaces/{id}", use_api_base=True)
+        return await self._c._arequest("GET", f"/emails/{id}")
 
-    def update(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("PATCH", f"/workspaces/{id}", data, use_api_base=True)
+    def update(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """PATCH /emails/:id"""
+        return self._c._request("PATCH", f"/emails/{id}", data or {})
 
-    async def aupdate(self, id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("PATCH", f"/workspaces/{id}", data, use_api_base=True)
-
-    def delete(self, id: str) -> dict[str, Any]:
-        return self._c._request("DELETE", f"/workspaces/{id}", use_api_base=True)
-
-    async def adelete(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("DELETE", f"/workspaces/{id}", use_api_base=True)
-
-    def list_members(self, ws_id: str) -> dict[str, Any]:
-        return self._c._request("GET", f"/workspaces/{ws_id}/members", use_api_base=True)
-
-    async def alist_members(self, ws_id: str) -> dict[str, Any]:
-        return await self._c._arequest("GET", f"/workspaces/{ws_id}/members", use_api_base=True)
-
-    def invite_member(self, ws_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("POST", f"/workspaces/{ws_id}/members", data, use_api_base=True)
-
-    async def ainvite_member(self, ws_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("POST", f"/workspaces/{ws_id}/members", data, use_api_base=True)
-
-    def update_member(self, ws_id: str, user_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return self._c._request("PATCH", f"/workspaces/{ws_id}/members/{user_id}", data, use_api_base=True)
-
-    async def aupdate_member(self, ws_id: str, user_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._c._arequest("PATCH", f"/workspaces/{ws_id}/members/{user_id}", data, use_api_base=True)
-
-    def remove_member(self, ws_id: str, user_id: str) -> dict[str, Any]:
-        return self._c._request("DELETE", f"/workspaces/{ws_id}/members/{user_id}", use_api_base=True)
-
-    async def aremove_member(self, ws_id: str, user_id: str) -> dict[str, Any]:
-        return await self._c._arequest("DELETE", f"/workspaces/{ws_id}/members/{user_id}", use_api_base=True)
+    async def aupdate(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("PATCH", f"/emails/{id}", data or {})
 
 
-# ── Main Client ────────────────────────────────────────────────────────────────
+class _LandingPagesResource(_Resource):
+    """landingPages — generated from scripts/sdk-endpoint-spec.json."""
+
+    def create(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /landing-pages"""
+        return self._c._request("POST", "/landing-pages", data or {})
+
+    async def acreate(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/landing-pages", data or {})
+
+
+class _MonetizationResource(_Resource):
+    """monetization — generated from scripts/sdk-endpoint-spec.json."""
+
+    def tip(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /monetization/tip"""
+        return self._c._request("POST", "/monetization/tip", data or {})
+
+    async def atip(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/monetization/tip", data or {})
+
+
+class _RevenueResource(_Resource):
+    """revenue — generated from scripts/sdk-endpoint-spec.json."""
+
+    def attribution(self, campaign_id: Optional[str] = None, period: Optional[str] = None) -> dict[str, Any]:
+        """GET /revenue/attribution"""
+        return self._c._request("GET", "/revenue/attribution", params={"campaign_id": campaign_id, "period": period})
+
+    async def aattribution(self, campaign_id: Optional[str] = None, period: Optional[str] = None) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/revenue/attribution", params={"campaign_id": campaign_id, "period": period})
+
+
+class _SegmentsResource(_Resource):
+    """segments — generated from scripts/sdk-endpoint-spec.json."""
+
+    def members(self, id: str, page: Optional[int] = None, limit: Optional[int] = None) -> dict[str, Any]:
+        """GET /segments/:id/members"""
+        return self._c._request("GET", f"/segments/{id}/members", params={"page": page, "limit": limit})
+
+    async def amembers(self, id: str, page: Optional[int] = None, limit: Optional[int] = None) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/segments/{id}/members", params={"page": page, "limit": limit})
+
+
+class _SubscriptionResource(_Resource):
+    """subscription — generated from scripts/sdk-endpoint-spec.json."""
+
+    def get(self, product: Optional[str] = None) -> dict[str, Any]:
+        """GET /subscription"""
+        return self._c._request("GET", "/subscription", params={"product": product})
+
+    async def aget(self, product: Optional[str] = None) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/subscription", params={"product": product})
+
+    def upsert(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /subscription"""
+        return self._c._request("POST", "/subscription", data or {})
+
+    async def aupsert(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/subscription", data or {})
+
+    def cancel(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """DELETE /subscription"""
+        return self._c._request("DELETE", "/subscription", data or {})
+
+    async def acancel(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("DELETE", "/subscription", data or {})
+
+
+class _TeamMembersResource(_Resource):
+    """teamMembers — generated from scripts/sdk-endpoint-spec.json."""
+
+    def get(self, owner_id: Optional[str] = None) -> dict[str, Any]:
+        """GET /team-members"""
+        return self._c._request("GET", "/team-members", params={"owner_id": owner_id})
+
+    async def aget(self, owner_id: Optional[str] = None) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/team-members", params={"owner_id": owner_id})
+
+
+class _WalletResource(_Resource):
+    """wallet — generated from scripts/sdk-endpoint-spec.json."""
+
+    def get(self) -> dict[str, Any]:
+        """GET /wallet"""
+        return self._c._request("GET", "/wallet")
+
+    async def aget(self) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/wallet")
+
+    def credit(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /wallet/credit"""
+        return self._c._request("POST", "/wallet/credit", data or {})
+
+    async def acredit(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/wallet/credit", data or {})
+
+    def debit(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /wallet/debit"""
+        return self._c._request("POST", "/wallet/debit", data or {})
+
+    async def adebit(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/wallet/debit", data or {})
+
+
+class _WarmupResource(_Resource):
+    """warmup — generated from scripts/sdk-endpoint-spec.json."""
+
+    def get(self) -> dict[str, Any]:
+        """GET /warmup"""
+        return self._c._request("GET", "/warmup")
+
+    async def aget(self) -> dict[str, Any]:
+        return await self._c._arequest("GET", "/warmup")
+
+
+class _StreamingResource(_Resource):
+    """The two Server-Sent Events endpoints.
+
+    Both live outside ``/v1`` and are API-key authenticated like everything
+    else, so a plan refusal surfaces as :class:`MisarMailPlanLimitError` here
+    too.
+    """
+
+    def generate_email(self, **options: Any):
+        """``POST /api/ai/generate-email/stream`` — token-by-token generation.
+
+        ::
+
+            for chunk in mail.streaming.generate_email(prompt="..."):
+                print(chunk.get("delta", ""), end="")
+        """
+        return self._c._sse_frames("POST", "/ai/generate-email/stream", options)
+
+    def campaign_send(self, campaign_id: str):
+        """``GET /api/campaigns/{id}/send-stream`` — live send progress."""
+        from urllib.parse import quote
+
+        return self._c._sse_frames(
+            "GET", f"/campaigns/{quote(campaign_id, safe='')}/send-stream"
+        )
+
 
 class MisarMailClient(_MisarMailCore):
     """
@@ -913,9 +1067,7 @@ class MisarMailClient(_MisarMailCore):
         self.templates = _TemplatesResource(self)
         self.automations = _AutomationsResource(self)
         self.domains = _DomainsResource(self)
-        self.aliases = _AliasesResource(self)
         self.dedicated_ips = _DedicatedIPsResource(self)
-        self.channels = _ChannelsResource(self)
         self.ab_tests = _ABTestsResource(self)
         self.sandbox = _SandboxResource(self)
         self.inbound = _InboundResource(self)
@@ -923,11 +1075,22 @@ class MisarMailClient(_MisarMailCore):
         self.track = _TrackResource(self)
         self.keys = _KeysResource(self)
         self.validate = _ValidateResource(self)
-        self.leads = _LeadsResource(self)
-        self.autopilot = _AutopilotResource(self)
-        self.sales_agent = _SalesAgentResource(self)
-        self.crm = _CRMResource(self)
         self.webhooks = _WebhooksResource(self)
         self.usage = _UsageResource(self)
         self.billing = _BillingResource(self)
-        self.workspaces = _WorkspacesResource(self)
+        self.plan = _PlanResource(self)
+        self.streaming = _StreamingResource(self)
+        self.ai = _AiResource(self)
+        self.credit_rates = _CreditRatesResource(self)
+        self.deliverability = _DeliverabilityResource(self)
+        self.dmarc = _DmarcResource(self)
+        self.email_accounts = _EmailAccountsResource(self)
+        self.emails = _EmailsResource(self)
+        self.landing_pages = _LandingPagesResource(self)
+        self.monetization = _MonetizationResource(self)
+        self.revenue = _RevenueResource(self)
+        self.segments = _SegmentsResource(self)
+        self.subscription = _SubscriptionResource(self)
+        self.team_members = _TeamMembersResource(self)
+        self.wallet = _WalletResource(self)
+        self.warmup = _WarmupResource(self)

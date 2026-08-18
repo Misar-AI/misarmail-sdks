@@ -1,35 +1,75 @@
-import type {
-  BaseClient,
-  Template,
-  CreateTemplateRequest,
-  TemplatesListResponse,
-  RenderTemplateRequest,
-  RenderTemplateResponse,
-} from "../types.js";
+import type { BaseClient } from "../types.js";
+
+export type TemplateType = "marketing" | "transactional" | "automation";
+
+export interface Template {
+  id: string;
+  name: string;
+  description?: string | null;
+  subject: string;
+  template_type: TemplateType;
+  variables?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateTemplateRequest {
+  name: string;
+  subject: string;
+  bodyHtml: string;
+  bodyText?: string;
+  description?: string;
+  templateType?: TemplateType;
+  variables?: string[];
+}
+
+export interface TemplatesListParams {
+  page?: number;
+  limit?: number;
+  type?: TemplateType;
+}
+
+export interface TemplatesListResponse {
+  success: true;
+  data: Template[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+}
+
+export interface RenderTemplateRequest {
+  template_id: string;
+  variables?: Record<string, string>;
+}
+
+export interface RenderTemplateResponse {
+  success: true;
+  data: {
+    subject: string;
+    html: string | null;
+    text: string | null;
+    templateId: string;
+    templateName: string;
+    warning?: string;
+  };
+}
 
 export class TemplatesResource {
   constructor(private client: BaseClient) {}
 
-  list(): Promise<TemplatesListResponse> {
-    return this.client.request("GET", "/templates");
+  /** GET /templates — list templates */
+  list(params?: TemplatesListParams): Promise<TemplatesListResponse> {
+    const qs = params ? `?${new URLSearchParams(params as Record<string, string>).toString()}` : "";
+    return this.client.request("GET", `/templates${qs}`);
   }
 
-  create(request: CreateTemplateRequest): Promise<Template> {
+  /** POST /templates — create a new template */
+  create(request: CreateTemplateRequest): Promise<{ success: true; data: Template }> {
     return this.client.request("POST", "/templates", request);
   }
 
-  get(id: string): Promise<Template> {
-    return this.client.request("GET", `/templates/${id}`);
-  }
-
-  update(id: string, request: Partial<CreateTemplateRequest>): Promise<Template> {
-    return this.client.request("PATCH", `/templates/${id}`, request);
-  }
-
-  delete(id: string): Promise<{ success: boolean }> {
-    return this.client.request("DELETE", `/templates/${id}`);
-  }
-
+  /**
+   * POST /templates/render — render a template with variable substitution.
+   * Returns the rendered subject, html, and text.
+   */
   render(request: RenderTemplateRequest): Promise<RenderTemplateResponse> {
     return this.client.request("POST", "/templates/render", request);
   }

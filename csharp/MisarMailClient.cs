@@ -2,7 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
-namespace Misar.Mail;
+namespace MisarMail;
 
 /// <summary>
 /// MisarMail API client (C# 10+, System.Text.Json).
@@ -11,9 +11,88 @@ namespace Misar.Mail;
 /// exponential back-off (starting at 500 ms) on retryable HTTP statuses
 /// (429, 500, 502, 503, 504).
 /// </summary>
-public sealed class MisarMailClient : IDisposable
+public sealed partial class MisarMailClient : IDisposable
 {
+    /// <summary>
+    /// Renders <c>?a=b&amp;c=d</c> for the pairs that are set. Used by the
+    /// generated members; returns "" when every value is null.
+    /// </summary>
+    private static string BuildQuery(params (string Name, string? Value)[] pairs)
+    {
+        var parts = new List<string>();
+        foreach (var (name, value) in pairs)
+        {
+            if (value is null) continue;
+            parts.Add($"{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}");
+        }
+        return parts.Count == 0 ? "" : "?" + string.Join("&", parts);
+    }
+
     private static readonly HashSet<int> RetryableStatuses = [429, 500, 502, 503, 504];
+
+    /// <summary>True when the body carries the API's plan-refusal marker.</summary>
+    private static bool IsPlanLimit(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return false;
+            if (root.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String
+                && c.GetString() == "plan_limit_exceeded") return true;
+            if (root.TryGetProperty("error_type", out var t) && t.ValueKind == JsonValueKind.String
+                && t.GetString() == "plan_limit_exceeded") return true;
+            return root.TryGetProperty("upgrade", out var u) && u.ValueKind == JsonValueKind.Object;
+        }
+        catch { return false; }
+    }
+
+    private static MisarMailPlanLimitException BuildPlanLimitError(
+        int status, string body, HttpResponseMessage response)
+    {
+        string message = "plan limit exceeded";
+        string? plan = null, upgradeUrl = null, feature = null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String)
+                message = e.GetString() ?? message;
+
+            if (root.TryGetProperty("upgrade", out var offer) && offer.ValueKind == JsonValueKind.Object)
+            {
+                if (offer.TryGetProperty("currentPlanSlug", out var ps) && ps.ValueKind == JsonValueKind.String)
+                    plan = ps.GetString();
+                else if (offer.TryGetProperty("current_plan", out var cp)
+                         && cp.TryGetProperty("slug", out var slug) && slug.ValueKind == JsonValueKind.String)
+                    plan = slug.GetString();
+
+                if (offer.TryGetProperty("urls", out var urls)
+                    && urls.TryGetProperty("pricing", out var pr) && pr.ValueKind == JsonValueKind.String)
+                    upgradeUrl = pr.GetString();
+
+                if (offer.TryGetProperty("feature", out var f) && f.ValueKind == JsonValueKind.String)
+                    feature = f.GetString();
+            }
+        }
+        catch { /* non-JSON body — headers below are the only source */ }
+
+        // Headers are authoritative; the offer body is the fallback when a
+        // proxy has stripped them.
+        if (response.Headers.TryGetValues("X-Misar-Plan", out var ph))
+            plan = System.Linq.Enumerable.FirstOrDefault(ph) ?? plan;
+        if (response.Headers.TryGetValues("X-Misar-Upgrade-Url", out var uh))
+            upgradeUrl = System.Linq.Enumerable.FirstOrDefault(uh) ?? upgradeUrl;
+
+        int? retryAfter = null;
+        if (response.Headers.TryGetValues("Retry-After", out var ra)
+            && int.TryParse(System.Linq.Enumerable.FirstOrDefault(ra), out var secs))
+            retryAfter = secs;
+
+        return new MisarMailPlanLimitException(status, message, plan, upgradeUrl, retryAfter, feature);
+    }
 
     private readonly string _apiKey;
     private readonly string _baseUrl;
@@ -26,7 +105,7 @@ public sealed class MisarMailClient : IDisposable
 
     public MisarMailClient(
         string apiKey,
-        string baseUrl = "https://mail.misar.io/api/v1",
+        string baseUrl = "https://api.misar.io/mail/v1",
         int maxRetries = 3,
         HttpClient? httpClient = null)
     {
@@ -91,14 +170,19 @@ public sealed class MisarMailClient : IDisposable
             {
                 int status = (int)response.StatusCode;
 
+                string responseBody = await response.Content
+                    .ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+                // A rate-limit 429 and a spent-allowance 429 are identical by
+                // status, so the body decides. Only the first is worth retrying.
+                if (IsPlanLimit(responseBody))
+                    throw BuildPlanLimitError(status, responseBody, response);
+
                 if (RetryableStatuses.Contains(status) && attempt < _maxRetries - 1)
                 {
                     lastException = new MisarMailException(status, "retryable error");
                     continue;
                 }
-
-                string responseBody = await response.Content
-                    .ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -147,17 +231,26 @@ public sealed class MisarMailClient : IDisposable
     public Task<JsonElement> Contacts_CreateAsync(object payload, CancellationToken ct = default) =>
         RequestAsync(HttpMethod.Post, "/contacts", payload, cancellationToken: ct);
 
-    /// <summary>GET /contacts/{id}</summary>
+    /// <summary>GET /contacts?id=&lt;uuid&gt; — query parameter, not a path segment.</summary>
     public Task<JsonElement> Contacts_GetAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/contacts/{id}", cancellationToken: ct);
+        RequestAsync(HttpMethod.Get, $"/contacts?id={Uri.EscapeDataString(id)}", cancellationToken: ct);
 
-    /// <summary>PATCH /contacts/{id}</summary>
-    public Task<JsonElement> Contacts_UpdateAsync(string id, object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Patch, $"/contacts/{id}", payload, cancellationToken: ct);
+    /// <summary>PATCH /contacts — the contact is identified by <c>email</c> in the body.</summary>
+    public Task<JsonElement> Contacts_UpdateAsync(string email, object payload, CancellationToken ct = default)
+    {
+        // The route identifies the contact by `email` in the body — not by an id
+        // and not by a path segment. Merging here keeps the caller's payload
+        // shape while guaranteeing the field the schema requires is present.
+        var merged = new Dictionary<string, object?>();
+        foreach (var prop in JsonSerializer.SerializeToElement(payload).EnumerateObject())
+            merged[prop.Name] = prop.Value;
+        merged["email"] = email;
+        return RequestAsync(HttpMethod.Patch, "/contacts", merged, cancellationToken: ct);
+    }
 
-    /// <summary>DELETE /contacts/{id}</summary>
+    /// <summary>DELETE /contacts?id=&lt;uuid&gt; — query parameter, not a path segment.</summary>
     public Task<JsonElement> Contacts_DeleteAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Delete, $"/contacts/{id}", cancellationToken: ct);
+        RequestAsync(HttpMethod.Delete, $"/contacts?id={Uri.EscapeDataString(id)}", cancellationToken: ct);
 
     /// <summary>POST /contacts/import</summary>
     public Task<JsonElement> Contacts_ImportContactsAsync(object payload, CancellationToken ct = default) =>
@@ -253,47 +346,28 @@ public sealed class MisarMailClient : IDisposable
 
     /// <summary>GET /domains</summary>
     public Task<JsonElement> Domains_ListAsync(CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, "/domains", cancellationToken: ct);
+        RequestAsync(HttpMethod.Get, "/domains", useApiBase: true, cancellationToken: ct);
 
     /// <summary>POST /domains</summary>
     public Task<JsonElement> Domains_CreateAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/domains", payload, cancellationToken: ct);
+        RequestAsync(HttpMethod.Post, "/domains", payload, useApiBase: true, cancellationToken: ct);
 
     /// <summary>GET /domains/{id}</summary>
     public Task<JsonElement> Domains_GetAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/domains/{id}", cancellationToken: ct);
+        RequestAsync(HttpMethod.Get, $"/domains/{id}", useApiBase: true, cancellationToken: ct);
 
     /// <summary>POST /domains/{id}/verify</summary>
     public Task<JsonElement> Domains_VerifyAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, $"/domains/{id}/verify", cancellationToken: ct);
+        RequestAsync(HttpMethod.Post, $"/domains/{id}/verify", useApiBase: true, cancellationToken: ct);
 
     /// <summary>DELETE /domains/{id}</summary>
     public Task<JsonElement> Domains_DeleteAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Delete, $"/domains/{id}", cancellationToken: ct);
+        RequestAsync(HttpMethod.Delete, $"/domains/{id}", useApiBase: true, cancellationToken: ct);
 
-    // -------------------------------------------------------------------------
-    // Aliases
-    // -------------------------------------------------------------------------
 
-    /// <summary>GET /aliases</summary>
-    public Task<JsonElement> Aliases_ListAsync(CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, "/aliases", cancellationToken: ct);
 
-    /// <summary>POST /aliases</summary>
-    public Task<JsonElement> Aliases_CreateAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/aliases", payload, cancellationToken: ct);
 
-    /// <summary>GET /aliases/{id}</summary>
-    public Task<JsonElement> Aliases_GetAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/aliases/{id}", cancellationToken: ct);
 
-    /// <summary>PATCH /aliases/{id}</summary>
-    public Task<JsonElement> Aliases_UpdateAsync(string id, object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Patch, $"/aliases/{id}", payload, cancellationToken: ct);
-
-    /// <summary>DELETE /aliases/{id}</summary>
-    public Task<JsonElement> Aliases_DeleteAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Delete, $"/aliases/{id}", cancellationToken: ct);
 
     // -------------------------------------------------------------------------
     // Dedicated IPs
@@ -314,18 +388,6 @@ public sealed class MisarMailClient : IDisposable
     /// <summary>DELETE /dedicated-ips/{id}</summary>
     public Task<JsonElement> DedicatedIPs_DeleteAsync(string id, CancellationToken ct = default) =>
         RequestAsync(HttpMethod.Delete, $"/dedicated-ips/{id}", cancellationToken: ct);
-
-    // -------------------------------------------------------------------------
-    // Channels
-    // -------------------------------------------------------------------------
-
-    /// <summary>POST /channels/whatsapp</summary>
-    public Task<JsonElement> Channels_SendWhatsAppAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/channels/whatsapp", payload, cancellationToken: ct);
-
-    /// <summary>POST /channels/push</summary>
-    public Task<JsonElement> Channels_SendPushAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/channels/push", payload, cancellationToken: ct);
 
     // -------------------------------------------------------------------------
     // A/B Tests
@@ -432,118 +494,6 @@ public sealed class MisarMailClient : IDisposable
         RequestAsync(HttpMethod.Post, "/validate", new { email = address }, cancellationToken: ct);
 
     // -------------------------------------------------------------------------
-    // Leads
-    // -------------------------------------------------------------------------
-
-    /// <summary>POST /leads/search</summary>
-    public Task<JsonElement> Leads_SearchAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/leads/search", payload, cancellationToken: ct);
-
-    /// <summary>GET /leads/jobs/{id}</summary>
-    public Task<JsonElement> Leads_GetJobAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/leads/jobs/{id}", cancellationToken: ct);
-
-    /// <summary>GET /leads/jobs</summary>
-    public Task<JsonElement> Leads_ListJobsAsync(string? queryParams = null, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, queryParams is null ? "/leads/jobs" : $"/leads/jobs?{queryParams}", cancellationToken: ct);
-
-    /// <summary>GET /leads/jobs/{jobId}/results</summary>
-    public Task<JsonElement> Leads_ResultsAsync(string jobId, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/leads/jobs/{jobId}/results", cancellationToken: ct);
-
-    /// <summary>POST /leads/import</summary>
-    public Task<JsonElement> Leads_ImportLeadsAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/leads/import", payload, cancellationToken: ct);
-
-    /// <summary>GET /leads/credits</summary>
-    public Task<JsonElement> Leads_CreditsAsync(CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, "/leads/credits", cancellationToken: ct);
-
-    // -------------------------------------------------------------------------
-    // Autopilot
-    // -------------------------------------------------------------------------
-
-    /// <summary>POST /autopilot</summary>
-    public Task<JsonElement> Autopilot_StartAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/autopilot", payload, cancellationToken: ct);
-
-    /// <summary>GET /autopilot/{id}</summary>
-    public Task<JsonElement> Autopilot_GetAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/autopilot/{id}", cancellationToken: ct);
-
-    /// <summary>GET /autopilot</summary>
-    public Task<JsonElement> Autopilot_ListAsync(string? queryParams = null, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, queryParams is null ? "/autopilot" : $"/autopilot?{queryParams}", cancellationToken: ct);
-
-    /// <summary>GET /autopilot/daily-plan</summary>
-    public Task<JsonElement> Autopilot_DailyPlanAsync(CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, "/autopilot/daily-plan", cancellationToken: ct);
-
-    // -------------------------------------------------------------------------
-    // Sales Agent
-    // -------------------------------------------------------------------------
-
-    /// <summary>GET /sales-agent/config</summary>
-    public Task<JsonElement> SalesAgent_GetConfigAsync(CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, "/sales-agent/config", cancellationToken: ct);
-
-    /// <summary>PATCH /sales-agent/config</summary>
-    public Task<JsonElement> SalesAgent_UpdateConfigAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Patch, "/sales-agent/config", payload, cancellationToken: ct);
-
-    /// <summary>GET /sales-agent/actions</summary>
-    public Task<JsonElement> SalesAgent_GetActionsAsync(string? queryParams = null, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, queryParams is null ? "/sales-agent/actions" : $"/sales-agent/actions?{queryParams}", cancellationToken: ct);
-
-    // -------------------------------------------------------------------------
-    // CRM
-    // -------------------------------------------------------------------------
-
-    /// <summary>GET /crm/conversations</summary>
-    public Task<JsonElement> CRM_ListConversationsAsync(string? queryParams = null, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, queryParams is null ? "/crm/conversations" : $"/crm/conversations?{queryParams}", cancellationToken: ct);
-
-    /// <summary>GET /crm/conversations/{id}</summary>
-    public Task<JsonElement> CRM_GetConversationAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/crm/conversations/{id}", cancellationToken: ct);
-
-    /// <summary>PATCH /crm/conversations/{id}</summary>
-    public Task<JsonElement> CRM_UpdateConversationAsync(string id, object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Patch, $"/crm/conversations/{id}", payload, cancellationToken: ct);
-
-    /// <summary>GET /crm/conversations/{conversationId}/messages</summary>
-    public Task<JsonElement> CRM_ListMessagesAsync(string conversationId, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/crm/conversations/{conversationId}/messages", cancellationToken: ct);
-
-    /// <summary>GET /crm/deals</summary>
-    public Task<JsonElement> CRM_ListDealsAsync(string? queryParams = null, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, queryParams is null ? "/crm/deals" : $"/crm/deals?{queryParams}", cancellationToken: ct);
-
-    /// <summary>POST /crm/deals</summary>
-    public Task<JsonElement> CRM_CreateDealAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/crm/deals", payload, cancellationToken: ct);
-
-    /// <summary>GET /crm/deals/{id}</summary>
-    public Task<JsonElement> CRM_GetDealAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/crm/deals/{id}", cancellationToken: ct);
-
-    /// <summary>PATCH /crm/deals/{id}</summary>
-    public Task<JsonElement> CRM_UpdateDealAsync(string id, object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Patch, $"/crm/deals/{id}", payload, cancellationToken: ct);
-
-    /// <summary>DELETE /crm/deals/{id}</summary>
-    public Task<JsonElement> CRM_DeleteDealAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Delete, $"/crm/deals/{id}", cancellationToken: ct);
-
-    /// <summary>GET /crm/clients</summary>
-    public Task<JsonElement> CRM_ListClientsAsync(string? queryParams = null, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, queryParams is null ? "/crm/clients" : $"/crm/clients?{queryParams}", cancellationToken: ct);
-
-    /// <summary>POST /crm/clients</summary>
-    public Task<JsonElement> CRM_CreateClientAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/crm/clients", payload, cancellationToken: ct);
-
-    // -------------------------------------------------------------------------
     // Webhooks
     // -------------------------------------------------------------------------
 
@@ -591,45 +541,14 @@ public sealed class MisarMailClient : IDisposable
     public Task<JsonElement> Billing_CheckoutAsync(object payload, CancellationToken ct = default) =>
         RequestAsync(HttpMethod.Post, "/billing/checkout", payload, useApiBase: true, cancellationToken: ct);
 
-    // -------------------------------------------------------------------------
-    // Workspaces  (apiBase — no /v1)
-    // -------------------------------------------------------------------------
 
-    /// <summary>GET {apiBase}/workspaces</summary>
-    public Task<JsonElement> Workspaces_ListAsync(CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, "/workspaces", useApiBase: true, cancellationToken: ct);
 
-    /// <summary>POST {apiBase}/workspaces</summary>
-    public Task<JsonElement> Workspaces_CreateAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/workspaces", payload, useApiBase: true, cancellationToken: ct);
 
-    /// <summary>GET {apiBase}/workspaces/{id}</summary>
-    public Task<JsonElement> Workspaces_GetAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/workspaces/{id}", useApiBase: true, cancellationToken: ct);
 
-    /// <summary>PATCH {apiBase}/workspaces/{id}</summary>
-    public Task<JsonElement> Workspaces_UpdateAsync(string id, object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Patch, $"/workspaces/{id}", payload, useApiBase: true, cancellationToken: ct);
 
-    /// <summary>DELETE {apiBase}/workspaces/{id}</summary>
-    public Task<JsonElement> Workspaces_DeleteAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Delete, $"/workspaces/{id}", useApiBase: true, cancellationToken: ct);
 
-    /// <summary>GET {apiBase}/workspaces/{wsId}/members</summary>
-    public Task<JsonElement> Workspaces_ListMembersAsync(string wsId, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, $"/workspaces/{wsId}/members", useApiBase: true, cancellationToken: ct);
 
-    /// <summary>POST {apiBase}/workspaces/{wsId}/members</summary>
-    public Task<JsonElement> Workspaces_InviteMemberAsync(string wsId, object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, $"/workspaces/{wsId}/members", payload, useApiBase: true, cancellationToken: ct);
 
-    /// <summary>PATCH {apiBase}/workspaces/{wsId}/members/{userId}</summary>
-    public Task<JsonElement> Workspaces_UpdateMemberAsync(string wsId, string userId, object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Patch, $"/workspaces/{wsId}/members/{userId}", payload, useApiBase: true, cancellationToken: ct);
-
-    /// <summary>DELETE {apiBase}/workspaces/{wsId}/members/{userId}</summary>
-    public Task<JsonElement> Workspaces_RemoveMemberAsync(string wsId, string userId, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Delete, $"/workspaces/{wsId}/members/{userId}", useApiBase: true, cancellationToken: ct);
 
     // -------------------------------------------------------------------------
     // IDisposable
@@ -640,4 +559,127 @@ public sealed class MisarMailClient : IDisposable
         if (_ownsHttpClient)
             _httpClient.Dispose();
     }
+
+    // =========================================================================
+    // Plan — live subscription standing for the key's owner
+    // =========================================================================
+
+    /// <summary>
+    /// GET /plan — plan, sending allowances, per-feature usage and the upgrade
+    /// offer. Read this before an expensive call rather than discovering the
+    /// ceiling through a <see cref="MisarMailPlanLimitException"/>.
+    /// </summary>
+    public Task<JsonElement> Plan_GetAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/plan", cancellationToken: ct);
+
+    /// <summary>GET /monetization/stats — revenue and monetization counters.</summary>
+    public Task<JsonElement> Plan_MonetizationAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/monetization/stats", cancellationToken: ct);
+
+    // =========================================================================
+    // Generated from scripts/sdk-endpoint-spec.json
+    //
+    // These twenty endpoints were missing from every SDK except TypeScript.
+    // The flat Group_MethodAsync naming matches the hand-written members.
+    // =========================================================================
+
+    /// <summary>POST /ai/subject-lines</summary>
+    public Task<JsonElement> Ai_SubjectLinesAsync(object? body = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Post, "/ai/subject-lines", body, cancellationToken: ct);
+
+    /// <summary>GET /credit-rates</summary>
+    public Task<JsonElement> CreditRates_ListAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/credit-rates", cancellationToken: ct);
+
+    /// <summary>GET /deliverability/audit</summary>
+    public Task<JsonElement> Deliverability_AuditAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/deliverability/audit", cancellationToken: ct);
+
+    /// <summary>GET /deliverability/score</summary>
+    public Task<JsonElement> Deliverability_ScoreAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/deliverability/score", cancellationToken: ct);
+
+    /// <summary>GET /dmarc/check</summary>
+    public Task<JsonElement> Dmarc_CheckAsync(string? domain = null, string? dkim_selector = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/dmarc/check" + BuildQuery(("domain", domain), ("dkim_selector", dkim_selector)), cancellationToken: ct);
+
+    /// <summary>GET /dmarc/domains</summary>
+    public Task<JsonElement> Dmarc_ListDomainsAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/dmarc/domains", cancellationToken: ct);
+
+    /// <summary>POST /dmarc/domains</summary>
+    public Task<JsonElement> Dmarc_AddDomainAsync(object? body = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Post, "/dmarc/domains", body, cancellationToken: ct);
+
+    /// <summary>DELETE /dmarc/domains</summary>
+    public Task<JsonElement> Dmarc_RemoveDomainAsync(string? domain_id = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Delete, "/dmarc/domains" + BuildQuery(("domain_id", domain_id)), cancellationToken: ct);
+
+    /// <summary>GET /email-accounts</summary>
+    public Task<JsonElement> EmailAccounts_ListAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/email-accounts", cancellationToken: ct);
+
+    /// <summary>GET /emails</summary>
+    public Task<JsonElement> Emails_ListAsync(string? folder = null, string? search = null, int? limit = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/emails" + BuildQuery(("folder", folder), ("search", search), ("limit", limit?.ToString())), cancellationToken: ct);
+
+    /// <summary>GET /emails/:id</summary>
+    public Task<JsonElement> Emails_GetAsync(string id, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/emails/" + Uri.EscapeDataString(id), cancellationToken: ct);
+
+    /// <summary>PATCH /emails/:id</summary>
+    public Task<JsonElement> Emails_UpdateAsync(string id, object? body = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Patch, "/emails/" + Uri.EscapeDataString(id), body, cancellationToken: ct);
+
+    /// <summary>POST /landing-pages</summary>
+    public Task<JsonElement> LandingPages_CreateAsync(object? body = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Post, "/landing-pages", body, cancellationToken: ct);
+
+    /// <summary>POST /monetization/tip</summary>
+    public Task<JsonElement> Monetization_TipAsync(object? body = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Post, "/monetization/tip", body, cancellationToken: ct);
+
+    /// <summary>GET /plan-limits</summary>
+    public Task<JsonElement> Plan_LimitsAsync(string? product = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/plan-limits" + BuildQuery(("product", product)), cancellationToken: ct);
+
+    /// <summary>GET /revenue/attribution</summary>
+    public Task<JsonElement> Revenue_AttributionAsync(string? campaign_id = null, string? period = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/revenue/attribution" + BuildQuery(("campaign_id", campaign_id), ("period", period)), cancellationToken: ct);
+
+    /// <summary>GET /segments/:id/members</summary>
+    public Task<JsonElement> Segments_MembersAsync(string id, int? page = null, int? limit = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/segments/" + Uri.EscapeDataString(id) + "/members" + BuildQuery(("page", page?.ToString()), ("limit", limit?.ToString())), cancellationToken: ct);
+
+    /// <summary>GET /subscription</summary>
+    public Task<JsonElement> Subscription_GetAsync(string? product = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/subscription" + BuildQuery(("product", product)), cancellationToken: ct);
+
+    /// <summary>POST /subscription</summary>
+    public Task<JsonElement> Subscription_UpsertAsync(object? body = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Post, "/subscription", body, cancellationToken: ct);
+
+    /// <summary>DELETE /subscription</summary>
+    public Task<JsonElement> Subscription_CancelAsync(object? body = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Delete, "/subscription", body, cancellationToken: ct);
+
+    /// <summary>GET /team-members</summary>
+    public Task<JsonElement> TeamMembers_GetAsync(string? owner_id = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/team-members" + BuildQuery(("owner_id", owner_id)), cancellationToken: ct);
+
+    /// <summary>GET /wallet</summary>
+    public Task<JsonElement> Wallet_GetAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/wallet", cancellationToken: ct);
+
+    /// <summary>POST /wallet/credit</summary>
+    public Task<JsonElement> Wallet_CreditAsync(object? body = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Post, "/wallet/credit", body, cancellationToken: ct);
+
+    /// <summary>POST /wallet/debit</summary>
+    public Task<JsonElement> Wallet_DebitAsync(object? body = null, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Post, "/wallet/debit", body, cancellationToken: ct);
+
+    /// <summary>GET /warmup</summary>
+    public Task<JsonElement> Warmup_GetAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/warmup", cancellationToken: ct);
 }

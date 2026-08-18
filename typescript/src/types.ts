@@ -313,4 +313,13 @@ export interface MisarMailClientOptions {
 
 export interface BaseClient {
   request<T>(method: string, path: string, body?: unknown): Promise<T>;
+  /** Request a non-versioned route (outside the `/v1` namespace). */
+  requestRoot<T>(method: string, path: string, body?: unknown): Promise<T>;
+  /**
+   * Open a Server-Sent Events connection to a non-versioned route and return
+   * the raw response, body unread. Streaming needs the live stream rather than
+   * a decoded payload, so it bypasses the retry/decode path the other two use —
+   * replaying a half-consumed stream is not meaningful.
+   */
+  openStream(method: string, path: string, body?: unknown): Promise<Response>;
 }

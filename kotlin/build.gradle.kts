@@ -13,9 +13,13 @@ repositories {
 }
 
 dependencies {
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.google.code.gson:gson:2.10.1")
+    // The client is built on java.net.http (JDK 11+) with Jackson and
+    // coroutines — the previously declared OkHttp and Gson were never imported
+    // by any source file, and the ones actually used were missing.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.16.1")
     testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
     testImplementation("io.mockk:mockk:1.13.9")
 }
 
@@ -42,7 +46,7 @@ publishing {
             pom {
                 name.set("MisarMail Kotlin SDK")
                 description.set("Official Kotlin SDK for the MisarMail API — coroutines, full API coverage")
-                url.set("https://mail.misar.io/docs/sdks/kotlin")
+                url.set("https://misarmail.com/docs/sdks/kotlin")
                 licenses {
                     license {
                         name.set("MIT License")
@@ -53,13 +57,13 @@ publishing {
                     developer {
                         name.set("Misar AI")
                         email.set("hello@misar.io")
-                        organization.set("Misar AI Technology Pvt. Ltd.")
+                        organization.set("Misar AI Technology Pvt Ltd")
                         organizationUrl.set("https://misar.io")
                     }
                 }
                 scm {
-                    connection.set("scm:git:git://github.com/misarai/misarmail-kotlin.git")
-                    url.set("https://github.com/misarai/misarmail-kotlin")
+                    connection.set("scm:git:git://github.com/Misar-AI/misarmail-sdks.git")
+                    url.set("https://github.com/Misar-AI/misarmail-sdks")
                 }
             }
         }

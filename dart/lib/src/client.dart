@@ -3,13 +3,29 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'errors.dart';
 
+/// Returns the decoded body when it carries the API's plan-refusal marker,
+/// otherwise null.
+Map<String, dynamic>? _planLimitBody(String raw) {
+  if (raw.isEmpty) return null;
+  try {
+    final d = jsonDecode(raw);
+    if (d is Map<String, dynamic> &&
+        (d['code'] == 'plan_limit_exceeded' ||
+            d['error_type'] == 'plan_limit_exceeded' ||
+            d['upgrade'] is Map)) {
+      return d;
+    }
+  } catch (_) {}
+  return null;
+}
+
 abstract class _Resource {
   final MisarMailClient _client;
   const _Resource(this._client);
 }
 
 String _deriveApiBase(String? baseUrl) {
-  final b = (baseUrl ?? 'https://mail.misar.io/api/v1')
+  final b = (baseUrl ?? 'https://api.misar.io/mail/v1')
       .replaceAll(RegExp(r'/$'), '');
   final idx = b.lastIndexOf('/v1');
   return idx >= 0 ? b.substring(0, idx) : b;
@@ -22,15 +38,29 @@ class MisarMailClient {
   final int _maxRetries;
   final http.Client _httpClient;
 
+  late final PlanResource plan;
+  late final StreamingResource streaming;
+  late final AiResource ai;
+  late final CreditRatesResource creditRates;
+  late final DeliverabilityResource deliverability;
+  late final DmarcResource dmarc;
+  late final EmailAccountsResource emailAccounts;
+  late final EmailsResource emails;
+  late final LandingPagesResource landingPages;
+  late final MonetizationResource monetization;
+  late final RevenueResource revenue;
+  late final SegmentsResource segments;
+  late final SubscriptionResource subscription;
+  late final TeamMembersResource teamMembers;
+  late final WalletResource wallet;
+  late final WarmupResource warmup;
   late final EmailResource email;
   late final ContactsResource contacts;
   late final CampaignsResource campaigns;
   late final TemplatesResource templates;
   late final AutomationsResource automations;
   late final DomainsResource domains;
-  late final AliasesResource aliases;
   late final DedicatedIpsResource dedicatedIps;
-  late final ChannelsResource channels;
   late final AbTestsResource abTests;
   late final SandboxResource sandbox;
   late final InboundResource inbound;
@@ -38,14 +68,9 @@ class MisarMailClient {
   late final TrackResource track;
   late final KeysResource keys;
   late final ValidateResource validate;
-  late final LeadsResource leads;
-  late final AutopilotResource autopilot;
-  late final SalesAgentResource salesAgent;
-  late final CrmResource crm;
   late final WebhooksResource webhooks;
   late final UsageResource usage;
   late final BillingResource billing;
-  late final WorkspacesResource workspaces;
 
   MisarMailClient({
     required String apiKey,
@@ -53,20 +78,34 @@ class MisarMailClient {
     int maxRetries = 3,
     http.Client? httpClient,
   })  : _apiKey = apiKey,
-        _baseUrl = (baseUrl ?? 'https://mail.misar.io/api/v1')
+        _baseUrl = (baseUrl ?? 'https://api.misar.io/mail/v1')
             .replaceAll(RegExp(r'/$'), ''),
         _apiBase = _deriveApiBase(baseUrl),
         _maxRetries = maxRetries,
         _httpClient = httpClient ?? http.Client() {
     email = EmailResource(this);
+    plan = PlanResource(this);
+    streaming = StreamingResource(this);
+    ai = AiResource(this);
+    creditRates = CreditRatesResource(this);
+    deliverability = DeliverabilityResource(this);
+    dmarc = DmarcResource(this);
+    emailAccounts = EmailAccountsResource(this);
+    emails = EmailsResource(this);
+    landingPages = LandingPagesResource(this);
+    monetization = MonetizationResource(this);
+    revenue = RevenueResource(this);
+    segments = SegmentsResource(this);
+    subscription = SubscriptionResource(this);
+    teamMembers = TeamMembersResource(this);
+    wallet = WalletResource(this);
+    warmup = WarmupResource(this);
     contacts = ContactsResource(this);
     campaigns = CampaignsResource(this);
     templates = TemplatesResource(this);
     automations = AutomationsResource(this);
     domains = DomainsResource(this);
-    aliases = AliasesResource(this);
     dedicatedIps = DedicatedIpsResource(this);
-    channels = ChannelsResource(this);
     abTests = AbTestsResource(this);
     sandbox = SandboxResource(this);
     inbound = InboundResource(this);
@@ -74,14 +113,9 @@ class MisarMailClient {
     track = TrackResource(this);
     keys = KeysResource(this);
     validate = ValidateResource(this);
-    leads = LeadsResource(this);
-    autopilot = AutopilotResource(this);
-    salesAgent = SalesAgentResource(this);
-    crm = CrmResource(this);
     webhooks = WebhooksResource(this);
     usage = UsageResource(this);
     billing = BillingResource(this);
-    workspaces = WorkspacesResource(this);
   }
 
   void close() => _httpClient.close();
@@ -139,6 +173,14 @@ class MisarMailClient {
           return jsonDecode(response.body) as Map<String, dynamic>;
         }
 
+        // A rate-limit 429 and a spent-allowance 429 are identical by status,
+        // so the body decides. Only the first is worth retrying.
+        final planLimit = _planLimitBody(response.body);
+        if (planLimit != null) {
+          throw MisarMailPlanLimitError.from(
+              status, planLimit, response.headers);
+        }
+
         if (const {429, 500, 502, 503, 504}.contains(status) &&
             attempt < _maxRetries - 1) {
           await Future<void>.delayed(
@@ -168,6 +210,71 @@ class MisarMailClient {
         throw MisarMailNetworkError(e.toString());
       }
     }
+  }
+
+  /// Opens an SSE connection and yields each frame as it arrives.
+  ///
+  /// Uses the API base, since both streaming routes sit outside `/v1`. Frames
+  /// end at a blank line and may span several `data:` lines; the `[DONE]`
+  /// sentinel ends the stream and is not yielded.
+  ///
+  /// Deliberately not retried: replaying a stream that failed mid-flight would
+  /// duplicate whatever the caller already consumed.
+  Stream<MisarMailStreamEvent> _sseStream(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+  }) async* {
+    final request = http.Request(method, Uri.parse('$_apiBase$path'))
+      ..headers.addAll({
+        'Authorization': 'Bearer $_apiKey',
+        'Accept': 'text/event-stream',
+        'Content-Type': 'application/json',
+      });
+    if (body != null) request.body = jsonEncode(body);
+
+    http.StreamedResponse response;
+    try {
+      response = await _httpClient.send(request);
+    } on SocketException catch (e) {
+      throw MisarMailNetworkError(e.message);
+    } on http.ClientException catch (e) {
+      throw MisarMailNetworkError(e.message);
+    }
+
+    if (response.statusCode >= 400) {
+      final raw = await response.stream.bytesToString();
+      final planLimit = _planLimitBody(raw);
+      if (planLimit != null) {
+        throw MisarMailPlanLimitError.from(
+            response.statusCode, planLimit, response.headers);
+      }
+      String message = raw;
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) {
+          message = (decoded['error'] as String?) ?? raw;
+        }
+      } catch (_) {}
+      throw MisarMailError(
+          response.statusCode, message.isEmpty ? 'stream error' : message);
+    }
+
+    var buffer = '';
+    await for (final chunk in response.stream.transform(utf8.decoder)) {
+      buffer += chunk;
+      while (true) {
+        final end = _sseFrameEnd(buffer);
+        if (end == -1) break;
+        final frame = buffer.substring(0, end);
+        buffer = buffer.substring(end).replaceFirst(RegExp(r'^(\r?\n){1,2}'), '');
+        final parsed = _parseSseFrame(frame);
+        if (parsed == _sseDone) return;
+        if (parsed != null) yield parsed as MisarMailStreamEvent;
+      }
+    }
+    final tail = _parseSseFrame(buffer);
+    if (tail != null && tail != _sseDone) yield tail as MisarMailStreamEvent;
   }
 }
 
@@ -249,30 +356,17 @@ class AutomationsResource extends _Resource {
 class DomainsResource extends _Resource {
   const DomainsResource(super.client);
   Future<Map<String, dynamic>> list() =>
-      _client._request('GET', '/domains');
+      _client._request('GET', '/domains', useApiBase: true);
   Future<Map<String, dynamic>> create(Map<String, dynamic> data) =>
-      _client._request('POST', '/domains', body: data);
+      _client._request('POST', '/domains', body: data, useApiBase: true);
   Future<Map<String, dynamic>> get(String id) =>
-      _client._request('GET', '/domains/$id');
+      _client._request('GET', '/domains/$id', useApiBase: true);
   Future<Map<String, dynamic>> verify(String id) =>
-      _client._request('POST', '/domains/$id/verify');
+      _client._request('POST', '/domains/$id/verify', useApiBase: true);
   Future<Map<String, dynamic>> delete(String id) =>
-      _client._request('DELETE', '/domains/$id');
+      _client._request('DELETE', '/domains/$id', useApiBase: true);
 }
 
-class AliasesResource extends _Resource {
-  const AliasesResource(super.client);
-  Future<Map<String, dynamic>> list() =>
-      _client._request('GET', '/aliases');
-  Future<Map<String, dynamic>> create(Map<String, dynamic> data) =>
-      _client._request('POST', '/aliases', body: data);
-  Future<Map<String, dynamic>> get(String id) =>
-      _client._request('GET', '/aliases/$id');
-  Future<Map<String, dynamic>> update(String id, Map<String, dynamic> data) =>
-      _client._request('PATCH', '/aliases/$id', body: data);
-  Future<Map<String, dynamic>> delete(String id) =>
-      _client._request('DELETE', '/aliases/$id');
-}
 
 class DedicatedIpsResource extends _Resource {
   const DedicatedIpsResource(super.client);
@@ -284,14 +378,6 @@ class DedicatedIpsResource extends _Resource {
       _client._request('PATCH', '/dedicated-ips/$id', body: data);
   Future<Map<String, dynamic>> delete(String id) =>
       _client._request('DELETE', '/dedicated-ips/$id');
-}
-
-class ChannelsResource extends _Resource {
-  const ChannelsResource(super.client);
-  Future<Map<String, dynamic>> sendWhatsapp(Map<String, dynamic> data) =>
-      _client._request('POST', '/channels/whatsapp', body: data);
-  Future<Map<String, dynamic>> sendPush(Map<String, dynamic> data) =>
-      _client._request('POST', '/channels/push', body: data);
 }
 
 class AbTestsResource extends _Resource {
@@ -358,74 +444,7 @@ class KeysResource extends _Resource {
 class ValidateResource extends _Resource {
   const ValidateResource(super.client);
   Future<Map<String, dynamic>> email(String address) =>
-      _client._request('POST', '/validate/email', body: {'email': address});
-}
-
-class LeadsResource extends _Resource {
-  const LeadsResource(super.client);
-  Future<Map<String, dynamic>> search(Map<String, dynamic> data) =>
-      _client._request('POST', '/leads/search', body: data);
-  Future<Map<String, dynamic>> getJob(String id) =>
-      _client._request('GET', '/leads/jobs/$id');
-  Future<Map<String, dynamic>> listJobs({Map<String, dynamic>? params}) =>
-      _client._request('GET', '/leads/jobs', queryParams: params);
-  Future<Map<String, dynamic>> results(String jobId) =>
-      _client._request('GET', '/leads/jobs/$jobId/results');
-  Future<Map<String, dynamic>> importLeads(Map<String, dynamic> data) =>
-      _client._request('POST', '/leads/import', body: data);
-  Future<Map<String, dynamic>> credits() =>
-      _client._request('GET', '/leads/credits');
-}
-
-class AutopilotResource extends _Resource {
-  const AutopilotResource(super.client);
-  Future<Map<String, dynamic>> start(Map<String, dynamic> data) =>
-      _client._request('POST', '/autopilot', body: data);
-  Future<Map<String, dynamic>> get(String id) =>
-      _client._request('GET', '/autopilot/$id');
-  Future<Map<String, dynamic>> list({Map<String, dynamic>? params}) =>
-      _client._request('GET', '/autopilot', queryParams: params);
-  Future<Map<String, dynamic>> dailyPlan() =>
-      _client._request('GET', '/autopilot/daily-plan');
-}
-
-class SalesAgentResource extends _Resource {
-  const SalesAgentResource(super.client);
-  Future<Map<String, dynamic>> getConfig() =>
-      _client._request('GET', '/sales-agent/config');
-  Future<Map<String, dynamic>> updateConfig(Map<String, dynamic> data) =>
-      _client._request('PATCH', '/sales-agent/config', body: data);
-  Future<Map<String, dynamic>> getActions({Map<String, dynamic>? params}) =>
-      _client._request('GET', '/sales-agent/actions', queryParams: params);
-}
-
-class CrmResource extends _Resource {
-  const CrmResource(super.client);
-  Future<Map<String, dynamic>> listConversations(
-          {Map<String, dynamic>? params}) =>
-      _client._request('GET', '/crm/conversations', queryParams: params);
-  Future<Map<String, dynamic>> getConversation(String id) =>
-      _client._request('GET', '/crm/conversations/$id');
-  Future<Map<String, dynamic>> updateConversation(
-          String id, Map<String, dynamic> data) =>
-      _client._request('PATCH', '/crm/conversations/$id', body: data);
-  Future<Map<String, dynamic>> listMessages(String conversationId) =>
-      _client._request('GET',
-          '/crm/conversations/$conversationId/messages');
-  Future<Map<String, dynamic>> listDeals({Map<String, dynamic>? params}) =>
-      _client._request('GET', '/crm/deals', queryParams: params);
-  Future<Map<String, dynamic>> createDeal(Map<String, dynamic> data) =>
-      _client._request('POST', '/crm/deals', body: data);
-  Future<Map<String, dynamic>> getDeal(String id) =>
-      _client._request('GET', '/crm/deals/$id');
-  Future<Map<String, dynamic>> updateDeal(String id, Map<String, dynamic> data) =>
-      _client._request('PATCH', '/crm/deals/$id', body: data);
-  Future<Map<String, dynamic>> deleteDeal(String id) =>
-      _client._request('DELETE', '/crm/deals/$id');
-  Future<Map<String, dynamic>> listClients({Map<String, dynamic>? params}) =>
-      _client._request('GET', '/crm/clients', queryParams: params);
-  Future<Map<String, dynamic>> createClient(Map<String, dynamic> data) =>
-      _client._request('POST', '/crm/clients', body: data);
+      _client._request('POST', '/validate', body: {'email': address});
 }
 
 class WebhooksResource extends _Resource {
@@ -459,30 +478,286 @@ class BillingResource extends _Resource {
           body: data, useApiBase: true);
 }
 
-class WorkspacesResource extends _Resource {
-  const WorkspacesResource(super.client);
+
+/// Live subscription standing for the key's owner.
+///
+/// Read this before an expensive call rather than discovering the ceiling
+/// through a [MisarMailPlanLimitError]: `usage` reports every metered feature
+/// and `upgrade` is non-null as soon as one of them is spent.
+class PlanResource extends _Resource {
+  const PlanResource(super.client);
+
+  /// `GET /plan` — plan, sending allowances, per-feature usage, upgrade offer.
+  Future<Map<String, dynamic>> get() => _client._request('GET', '/plan');
+
+  /// `GET /monetization/stats` — revenue and monetization counters.
+  Future<Map<String, dynamic>> monetization() =>
+      _client._request('GET', '/monetization/stats');
+}
+
+// ── Generated from scripts/sdk-endpoint-spec.json ────────────────────────────
+//
+// These twenty endpoints were missing from every SDK except TypeScript.
+
+/// `ai` — generated.
+class AiResource extends _Resource {
+  const AiResource(super.client);
+
+  /// `POST /ai/subject-lines`
+  Future<Map<String, dynamic>> subjectLines({Map<String, dynamic>? data}) =>
+      _client._request('POST', '/ai/subject-lines', body: data ?? const {});
+
+}
+
+/// `creditRates` — generated.
+class CreditRatesResource extends _Resource {
+  const CreditRatesResource(super.client);
+
+  /// `GET /credit-rates`
   Future<Map<String, dynamic>> list() =>
-      _client._request('GET', '/workspaces', useApiBase: true);
-  Future<Map<String, dynamic>> create(Map<String, dynamic> data) =>
-      _client._request('POST', '/workspaces', body: data, useApiBase: true);
+      _client._request('GET', '/credit-rates');
+
+}
+
+/// `deliverability` — generated.
+class DeliverabilityResource extends _Resource {
+  const DeliverabilityResource(super.client);
+
+  /// `GET /deliverability/audit`
+  Future<Map<String, dynamic>> audit() =>
+      _client._request('GET', '/deliverability/audit');
+
+  /// `GET /deliverability/score`
+  Future<Map<String, dynamic>> score() =>
+      _client._request('GET', '/deliverability/score');
+
+}
+
+/// `dmarc` — generated.
+class DmarcResource extends _Resource {
+  const DmarcResource(super.client);
+
+  /// `GET /dmarc/check`
+  Future<Map<String, dynamic>> check({String? domain, String? dkim_selector}) =>
+      _client._request('GET', '/dmarc/check', queryParams: {'domain': domain, 'dkim_selector': dkim_selector});
+
+  /// `GET /dmarc/domains`
+  Future<Map<String, dynamic>> listDomains() =>
+      _client._request('GET', '/dmarc/domains');
+
+  /// `POST /dmarc/domains`
+  Future<Map<String, dynamic>> addDomain({Map<String, dynamic>? data}) =>
+      _client._request('POST', '/dmarc/domains', body: data ?? const {});
+
+  /// `DELETE /dmarc/domains`
+  Future<Map<String, dynamic>> removeDomain({String? domain_id}) =>
+      _client._request('DELETE', '/dmarc/domains', queryParams: {'domain_id': domain_id});
+
+}
+
+/// `emailAccounts` — generated.
+class EmailAccountsResource extends _Resource {
+  const EmailAccountsResource(super.client);
+
+  /// `GET /email-accounts`
+  Future<Map<String, dynamic>> list() =>
+      _client._request('GET', '/email-accounts');
+
+}
+
+/// `emails` — generated.
+class EmailsResource extends _Resource {
+  const EmailsResource(super.client);
+
+  /// `GET /emails`
+  Future<Map<String, dynamic>> list({String? folder, String? search, int? limit}) =>
+      _client._request('GET', '/emails', queryParams: {'folder': folder, 'search': search, 'limit': limit});
+
+  /// `GET /emails/:id`
   Future<Map<String, dynamic>> get(String id) =>
-      _client._request('GET', '/workspaces/$id', useApiBase: true);
-  Future<Map<String, dynamic>> update(String id, Map<String, dynamic> data) =>
-      _client._request('PATCH', '/workspaces/$id',
-          body: data, useApiBase: true);
-  Future<Map<String, dynamic>> delete(String id) =>
-      _client._request('DELETE', '/workspaces/$id', useApiBase: true);
-  Future<Map<String, dynamic>> listMembers(String wsId) =>
-      _client._request('GET', '/workspaces/$wsId/members', useApiBase: true);
-  Future<Map<String, dynamic>> inviteMember(
-          String wsId, Map<String, dynamic> data) =>
-      _client._request('POST', '/workspaces/$wsId/members',
-          body: data, useApiBase: true);
-  Future<Map<String, dynamic>> updateMember(
-          String wsId, String userId, Map<String, dynamic> data) =>
-      _client._request('PATCH', '/workspaces/$wsId/members/$userId',
-          body: data, useApiBase: true);
-  Future<Map<String, dynamic>> removeMember(String wsId, String userId) =>
-      _client._request('DELETE', '/workspaces/$wsId/members/$userId',
-          useApiBase: true);
+      _client._request('GET', '/emails/${Uri.encodeComponent(id)}');
+
+  /// `PATCH /emails/:id`
+  Future<Map<String, dynamic>> update(String id, {Map<String, dynamic>? data}) =>
+      _client._request('PATCH', '/emails/${Uri.encodeComponent(id)}', body: data ?? const {});
+
+}
+
+/// `landingPages` — generated.
+class LandingPagesResource extends _Resource {
+  const LandingPagesResource(super.client);
+
+  /// `POST /landing-pages`
+  Future<Map<String, dynamic>> create({Map<String, dynamic>? data}) =>
+      _client._request('POST', '/landing-pages', body: data ?? const {});
+
+}
+
+/// `monetization` — generated.
+class MonetizationResource extends _Resource {
+  const MonetizationResource(super.client);
+
+  /// `POST /monetization/tip`
+  Future<Map<String, dynamic>> tip({Map<String, dynamic>? data}) =>
+      _client._request('POST', '/monetization/tip', body: data ?? const {});
+
+}
+
+/// `revenue` — generated.
+class RevenueResource extends _Resource {
+  const RevenueResource(super.client);
+
+  /// `GET /revenue/attribution`
+  Future<Map<String, dynamic>> attribution({String? campaign_id, String? period}) =>
+      _client._request('GET', '/revenue/attribution', queryParams: {'campaign_id': campaign_id, 'period': period});
+
+}
+
+/// `segments` — generated.
+class SegmentsResource extends _Resource {
+  const SegmentsResource(super.client);
+
+  /// `GET /segments/:id/members`
+  Future<Map<String, dynamic>> members(String id, {int? page, int? limit}) =>
+      _client._request('GET', '/segments/${Uri.encodeComponent(id)}/members', queryParams: {'page': page, 'limit': limit});
+
+}
+
+/// `subscription` — generated.
+class SubscriptionResource extends _Resource {
+  const SubscriptionResource(super.client);
+
+  /// `GET /subscription`
+  Future<Map<String, dynamic>> get({String? product}) =>
+      _client._request('GET', '/subscription', queryParams: {'product': product});
+
+  /// `POST /subscription`
+  Future<Map<String, dynamic>> upsert({Map<String, dynamic>? data}) =>
+      _client._request('POST', '/subscription', body: data ?? const {});
+
+  /// `DELETE /subscription`
+  Future<Map<String, dynamic>> cancel({Map<String, dynamic>? data}) =>
+      _client._request('DELETE', '/subscription', body: data ?? const {});
+
+}
+
+/// `teamMembers` — generated.
+class TeamMembersResource extends _Resource {
+  const TeamMembersResource(super.client);
+
+  /// `GET /team-members`
+  Future<Map<String, dynamic>> get({String? owner_id}) =>
+      _client._request('GET', '/team-members', queryParams: {'owner_id': owner_id});
+
+}
+
+/// `wallet` — generated.
+class WalletResource extends _Resource {
+  const WalletResource(super.client);
+
+  /// `GET /wallet`
+  Future<Map<String, dynamic>> get() =>
+      _client._request('GET', '/wallet');
+
+  /// `POST /wallet/credit`
+  Future<Map<String, dynamic>> credit({Map<String, dynamic>? data}) =>
+      _client._request('POST', '/wallet/credit', body: data ?? const {});
+
+  /// `POST /wallet/debit`
+  Future<Map<String, dynamic>> debit({Map<String, dynamic>? data}) =>
+      _client._request('POST', '/wallet/debit', body: data ?? const {});
+
+}
+
+/// `warmup` — generated.
+class WarmupResource extends _Resource {
+  const WarmupResource(super.client);
+
+  /// `GET /warmup`
+  Future<Map<String, dynamic>> get() =>
+      _client._request('GET', '/warmup');
+
+}
+
+// ── Server-Sent Events ───────────────────────────────────────────────────────
+
+/// One decoded SSE frame.
+///
+/// MisarMail emits unnamed frames — `data: {...}` with no `event:` line — so
+/// [event] is normally null. [data] is the decoded JSON, or the raw string when
+/// the payload was not JSON.
+class MisarMailStreamEvent {
+  /// The SSE `event:` name, when the server sends one.
+  final String? event;
+
+  /// Decoded JSON payload, or the raw string.
+  final dynamic data;
+
+  const MisarMailStreamEvent(this.event, this.data);
+
+  @override
+  String toString() => 'MisarMailStreamEvent($event, $data)';
+}
+
+/// Sentinel returned by the frame parser for `data: [DONE]`.
+const _sseDone = Object();
+
+int _sseFrameEnd(String buffer) {
+  final lf = buffer.indexOf('\n\n');
+  final crlf = buffer.indexOf('\r\n\r\n');
+  if (lf == -1) return crlf;
+  if (crlf == -1) return lf;
+  return lf < crlf ? lf : crlf;
+}
+
+/// Decodes one frame. Returns [_sseDone] for the terminating sentinel, or null
+/// for a keepalive comment or empty frame.
+Object? _parseSseFrame(String frame) {
+  String? event;
+  final dataLines = <String>[];
+
+  for (final line in frame.replaceAll('\r\n', '\n').split('\n')) {
+    if (line.isEmpty || line.startsWith(':')) continue;
+    if (line.startsWith('event:')) {
+      event = line.substring(6).trim();
+    } else if (line.startsWith('data:')) {
+      dataLines.add(line.substring(5).replaceFirst(RegExp(r'^ '), ''));
+    }
+  }
+  if (dataLines.isEmpty) return null;
+
+  final raw = dataLines.join('\n');
+  if (raw == '[DONE]') return _sseDone;
+
+  dynamic decoded;
+  try {
+    decoded = jsonDecode(raw);
+  } catch (_) {
+    decoded = raw;
+  }
+  return MisarMailStreamEvent(event, decoded);
+}
+
+/// The two Server-Sent Events endpoints.
+///
+/// Both live outside `/v1` and are API-key authenticated like everything else,
+/// so a plan refusal surfaces as [MisarMailPlanLimitError] here too.
+class StreamingResource extends _Resource {
+  const StreamingResource(super.client);
+
+  /// `POST /api/ai/generate-email/stream` — token-by-token generation.
+  ///
+  /// ```dart
+  /// await for (final e in mail.streaming.generateEmail({'prompt': '…'})) {
+  ///   stdout.write(e.data['delta'] ?? '');
+  /// }
+  /// ```
+  Stream<MisarMailStreamEvent> generateEmail(Map<String, dynamic> options) =>
+      _client._sseStream('POST', '/ai/generate-email/stream', body: options);
+
+  /// `GET /api/campaigns/{id}/send-stream` — live send progress.
+  Stream<MisarMailStreamEvent> campaignSend(String campaignId) => _client._sseStream(
+        'GET',
+        '/campaigns/${Uri.encodeComponent(campaignId)}/send-stream',
+      );
 }

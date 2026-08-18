@@ -1,10 +1,12 @@
+require "erb"
 require "net/http"
 require "uri"
 require "json"
 
 module MisarMail
-  BASE_URL     = "https://mail.misar.io/api/v1"
-  BILLING_BASE = "https://mail.misar.io/api"
+  BASE_URL     = "https://api.misar.io/mail/v1"
+  API_BASE     = "https://api.misar.io/mail"
+  BILLING_BASE = "https://api.misar.io/mail"
   RETRYABLE    = [429, 500, 502, 503, 504].freeze
   RETRY_BASE_S = 0.3
 
@@ -36,15 +38,15 @@ module MisarMail
     end
 
     def get(id)
-      @client.request(:get, "/contacts/#{id}")
+      @client.request(:get, "/contacts?id=#{ERB::Util.url_encode(id)}")
     end
 
-    def update(id, data)
-      @client.request(:patch, "/contacts/#{id}", data)
+    def update(email, data)
+      @client.request(:patch, "/contacts", data.merge(email: email))
     end
 
     def delete(id)
-      @client.request(:delete, "/contacts/#{id}")
+      @client.request(:delete, "/contacts?id=#{ERB::Util.url_encode(id)}")
     end
 
     def import_contacts(data)
@@ -142,49 +144,26 @@ module MisarMail
 
   class DomainsResource < Resource
     def list
-      @client.request(:get, "/domains")
+      @client.request(:get, "/domains", {}, API_BASE)
     end
 
     def create(data)
-      @client.request(:post, "/domains", data)
+      @client.request(:post, "/domains", data, API_BASE)
     end
 
     def get(id)
-      @client.request(:get, "/domains/#{id}")
+      @client.request(:get, "/domains/#{id}", {}, API_BASE)
     end
 
     def verify(id)
-      @client.request(:post, "/domains/#{id}/verify")
+      @client.request(:post, "/domains/#{id}/verify", {}, API_BASE)
     end
 
     def delete(id)
-      @client.request(:delete, "/domains/#{id}")
+      @client.request(:delete, "/domains/#{id}", {}, API_BASE)
     end
   end
 
-  # ── Resource: Aliases ────────────────────────────────────────────────────────
-
-  class AliasesResource < Resource
-    def list
-      @client.request(:get, "/aliases")
-    end
-
-    def create(data)
-      @client.request(:post, "/aliases", data)
-    end
-
-    def get(id)
-      @client.request(:get, "/aliases/#{id}")
-    end
-
-    def update(id, data)
-      @client.request(:patch, "/aliases/#{id}", data)
-    end
-
-    def delete(id)
-      @client.request(:delete, "/aliases/#{id}")
-    end
-  end
 
   # ── Resource: Dedicated IPs ──────────────────────────────────────────────────
 
@@ -206,17 +185,6 @@ module MisarMail
     end
   end
 
-  # ── Resource: Channels ───────────────────────────────────────────────────────
-
-  class ChannelsResource < Resource
-    def send_whatsapp(data)
-      @client.request(:post, "/channels/whatsapp/send", data)
-    end
-
-    def send_push(data)
-      @client.request(:post, "/channels/push/send", data)
-    end
-  end
 
   # ── Resource: A/B Tests ──────────────────────────────────────────────────────
 
@@ -321,125 +289,7 @@ module MisarMail
 
   class ValidateResource < Resource
     def email(address)
-      @client.request(:post, "/validate/email", { email: address })
-    end
-  end
-
-  # ── Resource: Leads ──────────────────────────────────────────────────────────
-
-  class LeadsResource < Resource
-    def search(data)
-      @client.request(:post, "/leads/search", data)
-    end
-
-    def get_job(id)
-      @client.request(:get, "/leads/jobs/#{id}")
-    end
-
-    def list_jobs(params = {})
-      qs = params.empty? ? "" : "?#{URI.encode_www_form(params)}"
-      @client.request(:get, "/leads/jobs#{qs}")
-    end
-
-    def results(job_id)
-      @client.request(:get, "/leads/jobs/#{job_id}/results")
-    end
-
-    def import_leads(data)
-      @client.request(:post, "/leads/import", data)
-    end
-
-    def credits
-      @client.request(:get, "/leads/credits")
-    end
-  end
-
-  # ── Resource: Autopilot ──────────────────────────────────────────────────────
-
-  class AutopilotResource < Resource
-    def start(data)
-      @client.request(:post, "/autopilot", data)
-    end
-
-    def get(id)
-      @client.request(:get, "/autopilot/#{id}")
-    end
-
-    def list(params = {})
-      qs = params.empty? ? "" : "?#{URI.encode_www_form(params)}"
-      @client.request(:get, "/autopilot#{qs}")
-    end
-
-    def daily_plan
-      @client.request(:get, "/autopilot/daily-plan")
-    end
-  end
-
-  # ── Resource: Sales Agent ────────────────────────────────────────────────────
-
-  class SalesAgentResource < Resource
-    def get_config
-      @client.request(:get, "/sales-agent/config")
-    end
-
-    def update_config(data)
-      @client.request(:patch, "/sales-agent/config", data)
-    end
-
-    def get_actions(params = {})
-      qs = params.empty? ? "" : "?#{URI.encode_www_form(params)}"
-      @client.request(:get, "/sales-agent/actions#{qs}")
-    end
-  end
-
-  # ── Resource: CRM ────────────────────────────────────────────────────────────
-
-  class CrmResource < Resource
-    def list_conversations(params = {})
-      qs = params.empty? ? "" : "?#{URI.encode_www_form(params)}"
-      @client.request(:get, "/crm/conversations#{qs}")
-    end
-
-    def get_conversation(id)
-      @client.request(:get, "/crm/conversations/#{id}")
-    end
-
-    def update_conversation(id, data)
-      @client.request(:patch, "/crm/conversations/#{id}", data)
-    end
-
-    def list_messages(conversation_id)
-      @client.request(:get, "/crm/conversations/#{conversation_id}/messages")
-    end
-
-    def list_deals(params = {})
-      qs = params.empty? ? "" : "?#{URI.encode_www_form(params)}"
-      @client.request(:get, "/crm/deals#{qs}")
-    end
-
-    def create_deal(data)
-      @client.request(:post, "/crm/deals", data)
-    end
-
-    def get_deal(id)
-      @client.request(:get, "/crm/deals/#{id}")
-    end
-
-    def update_deal(id, data)
-      @client.request(:patch, "/crm/deals/#{id}", data)
-    end
-
-    def delete_deal(id)
-      @client.request(:delete, "/crm/deals/#{id}")
-    end
-
-    def list_clients(params = {})
-      qs = params.empty? ? "" : "?#{URI.encode_www_form(params)}"
-      @client.request(:get, "/crm/clients#{qs}")
-    end
-
-    def create_client(data)
-      @client.request(:post, "/crm/clients", data)
+      @client.request(:post, "/validate", { email: address })
     end
   end
 
@@ -492,69 +342,260 @@ module MisarMail
     end
   end
 
-  # ── Resource: Workspaces ─────────────────────────────────────────────────────
-
-  class WorkspacesResource < Resource
-    def list
-      @client.request(:get, "/workspaces", {}, BILLING_BASE)
-    end
-
-    def create(data)
-      @client.request(:post, "/workspaces", data, BILLING_BASE)
-    end
-
-    def get(id)
-      @client.request(:get, "/workspaces/#{id}", {}, BILLING_BASE)
-    end
-
-    def update(id, data)
-      @client.request(:patch, "/workspaces/#{id}", data, BILLING_BASE)
-    end
-
-    def delete(id)
-      @client.request(:delete, "/workspaces/#{id}", {}, BILLING_BASE)
-    end
-
-    def list_members(ws_id)
-      @client.request(:get, "/workspaces/#{ws_id}/members", {}, BILLING_BASE)
-    end
-
-    def invite_member(ws_id, data)
-      @client.request(:post, "/workspaces/#{ws_id}/members", data, BILLING_BASE)
-    end
-
-    def update_member(ws_id, user_id, data)
-      @client.request(:patch, "/workspaces/#{ws_id}/members/#{user_id}", data, BILLING_BASE)
-    end
-
-    def remove_member(ws_id, user_id)
-      @client.request(:delete, "/workspaces/#{ws_id}/members/#{user_id}", {}, BILLING_BASE)
-    end
-  end
 
   # ── Main Client ──────────────────────────────────────────────────────────────
 
+  # Live subscription standing for the key's owner.
+  #
+  # Read this before an expensive call rather than discovering the ceiling
+  # through a PlanLimitError: +usage+ reports every metered feature and
+  # +upgrade+ is non-nil as soon as one of them is spent.
+  class PlanResource < Resource
+    # GET /plan — plan, sending allowances, per-feature usage, upgrade offer.
+    def get
+      @client.request(:get, "/plan")
+    end
+
+    # GET /monetization/stats — revenue and monetization counters.
+    def monetization
+      @client.request(:get, "/monetization/stats")
+    end
+  end
+
+
+  # ── Generated from scripts/sdk-endpoint-spec.json ──────────────────────────
+  #
+  # These twenty endpoints were missing from every SDK except TypeScript.
+
+  class AiResource < Resource
+    # POST /ai/subject-lines
+    def subject_lines(data: {})
+      @client.request(:post, "/ai/subject-lines", data)
+    end
+
+  end
+
+  class CreditRatesResource < Resource
+    # GET /credit-rates
+    def list
+      @client.request(:get, "/credit-rates")
+    end
+
+  end
+
+  class DeliverabilityResource < Resource
+    # GET /deliverability/audit
+    def audit
+      @client.request(:get, "/deliverability/audit")
+    end
+
+    # GET /deliverability/score
+    def score
+      @client.request(:get, "/deliverability/score")
+    end
+
+  end
+
+  class DmarcResource < Resource
+    # GET /dmarc/check
+    def check(domain: nil, dkim_selector: nil)
+      @client.request(:get, "/dmarc/check#{query(compact(domain: domain, dkim_selector: dkim_selector))}")
+    end
+
+    # GET /dmarc/domains
+    def list_domains
+      @client.request(:get, "/dmarc/domains")
+    end
+
+    # POST /dmarc/domains
+    def add_domain(data: {})
+      @client.request(:post, "/dmarc/domains", data)
+    end
+
+    # DELETE /dmarc/domains
+    def remove_domain(domain_id: nil)
+      @client.request(:delete, "/dmarc/domains#{query(compact(domain_id: domain_id))}")
+    end
+
+  end
+
+  class EmailAccountsResource < Resource
+    # GET /email-accounts
+    def list
+      @client.request(:get, "/email-accounts")
+    end
+
+  end
+
+  class EmailsResource < Resource
+    # GET /emails
+    def list(folder: nil, search: nil, limit: nil)
+      @client.request(:get, "/emails#{query(compact(folder: folder, search: search, limit: limit))}")
+    end
+
+    # GET /emails/:id
+    def get(id)
+      @client.request(:get, "/emails/#{id}")
+    end
+
+    # PATCH /emails/:id
+    def update(id, data: {})
+      @client.request(:patch, "/emails/#{id}", data)
+    end
+
+  end
+
+  class LandingPagesResource < Resource
+    # POST /landing-pages
+    def create(data: {})
+      @client.request(:post, "/landing-pages", data)
+    end
+
+  end
+
+  class MonetizationResource < Resource
+    # POST /monetization/tip
+    def tip(data: {})
+      @client.request(:post, "/monetization/tip", data)
+    end
+
+  end
+
+  class RevenueResource < Resource
+    # GET /revenue/attribution
+    def attribution(campaign_id: nil, period: nil)
+      @client.request(:get, "/revenue/attribution#{query(compact(campaign_id: campaign_id, period: period))}")
+    end
+
+  end
+
+  class SegmentsResource < Resource
+    # GET /segments/:id/members
+    def members(id, page: nil, limit: nil)
+      @client.request(:get, "/segments/#{id}/members#{query(compact(page: page, limit: limit))}")
+    end
+
+  end
+
+  class SubscriptionResource < Resource
+    # GET /subscription
+    def get(product: nil)
+      @client.request(:get, "/subscription#{query(compact(product: product))}")
+    end
+
+    # POST /subscription
+    def upsert(data: {})
+      @client.request(:post, "/subscription", data)
+    end
+
+    # DELETE /subscription
+    def cancel(data: {})
+      @client.request(:delete, "/subscription", data)
+    end
+
+  end
+
+  class TeamMembersResource < Resource
+    # GET /team-members
+    def get(owner_id: nil)
+      @client.request(:get, "/team-members#{query(compact(owner_id: owner_id))}")
+    end
+
+  end
+
+  class WalletResource < Resource
+    # GET /wallet
+    def get
+      @client.request(:get, "/wallet")
+    end
+
+    # POST /wallet/credit
+    def credit(data: {})
+      @client.request(:post, "/wallet/credit", data)
+    end
+
+    # POST /wallet/debit
+    def debit(data: {})
+      @client.request(:post, "/wallet/debit", data)
+    end
+
+  end
+
+  class WarmupResource < Resource
+    # GET /warmup
+    def get
+      @client.request(:get, "/warmup")
+    end
+
+  end
+
+  # One decoded SSE frame.
+  #
+  # MisarMail emits unnamed frames — +data: {...}+ with no +event:+ line — so
+  # +event+ is normally nil. +data+ is the decoded JSON; +raw+ is always the
+  # payload exactly as received.
+  StreamEvent = Struct.new(:event, :data, :raw)
+
+  # The two Server-Sent Events endpoints.
+  #
+  # Both live outside +/v1+, so they use API_BASE. Both are API-key
+  # authenticated and metered, so a plan refusal on open raises PlanLimitError
+  # exactly as a non-streaming call would.
+  class StreamingResource < Resource
+    # POST /api/ai/generate-email/stream — token-by-token generation.
+    #
+    #   mail.streaming.generate_email(prompt: "...") do |frame|
+    #     print frame.data["delta"]
+    #   end
+    #
+    # Returns an Enumerator when no block is given.
+    def generate_email(**options, &block)
+      @client.sse_stream(:post, "/ai/generate-email/stream", options, &block)
+    end
+
+    # GET /api/campaigns/{id}/send-stream — live send progress.
+    def campaign_send(campaign_id, &block)
+      path = "/campaigns/#{ERB::Util.url_encode(campaign_id)}/send-stream"
+      @client.sse_stream(:get, path, nil, &block)
+    end
+  end
+
   class Client
+    attr_reader :plan, :streaming, :ai, :credit_rates, :deliverability, :dmarc, :email_accounts, :emails, :landing_pages, :monetization, :revenue, :segments, :subscription, :team_members, :wallet, :warmup
     attr_reader :email, :contacts, :campaigns, :templates, :automations,
-                :domains, :aliases, :dedicated_ips, :channels, :ab_tests,
+                :domains, :dedicated_ips, :ab_tests,
                 :sandbox, :inbound, :analytics, :track, :keys, :validate,
-                :leads, :autopilot, :sales_agent, :crm, :webhooks, :usage,
-                :billing, :workspaces
+                :webhooks, :usage,
+                :billing
 
     def initialize(api_key:, timeout: 30, max_retries: 3)
       @api_key     = api_key
       @timeout     = timeout
       @max_retries = max_retries
 
+      @plan          = PlanResource.new(self)
+      @streaming     = StreamingResource.new(self)
+      @ai = AiResource.new(self)
+      @credit_rates = CreditRatesResource.new(self)
+      @deliverability = DeliverabilityResource.new(self)
+      @dmarc = DmarcResource.new(self)
+      @email_accounts = EmailAccountsResource.new(self)
+      @emails = EmailsResource.new(self)
+      @landing_pages = LandingPagesResource.new(self)
+      @monetization = MonetizationResource.new(self)
+      @revenue = RevenueResource.new(self)
+      @segments = SegmentsResource.new(self)
+      @subscription = SubscriptionResource.new(self)
+      @team_members = TeamMembersResource.new(self)
+      @wallet = WalletResource.new(self)
+      @warmup = WarmupResource.new(self)
       @email         = EmailResource.new(self)
       @contacts      = ContactsResource.new(self)
       @campaigns     = CampaignsResource.new(self)
       @templates     = TemplatesResource.new(self)
       @automations   = AutomationsResource.new(self)
       @domains       = DomainsResource.new(self)
-      @aliases       = AliasesResource.new(self)
       @dedicated_ips = DedicatedIpsResource.new(self)
-      @channels      = ChannelsResource.new(self)
       @ab_tests      = AbTestsResource.new(self)
       @sandbox       = SandboxResource.new(self)
       @inbound       = InboundResource.new(self)
@@ -562,14 +603,9 @@ module MisarMail
       @track         = TrackResource.new(self)
       @keys          = KeysResource.new(self)
       @validate      = ValidateResource.new(self)
-      @leads         = LeadsResource.new(self)
-      @autopilot     = AutopilotResource.new(self)
-      @sales_agent   = SalesAgentResource.new(self)
-      @crm           = CrmResource.new(self)
       @webhooks      = WebhooksResource.new(self)
       @usage         = UsageResource.new(self)
       @billing       = BillingResource.new(self)
-      @workspaces    = WorkspacesResource.new(self)
     end
 
     # @param method [Symbol] :get, :post, :patch, :put, :delete
@@ -596,6 +632,17 @@ module MisarMail
           resp = http.request(req)
           last_status = resp.code.to_i
 
+          # A rate-limit 429 and a spent-allowance 429 are identical by
+          # status, so the body decides. Only the first is worth retrying.
+          if plan_limit?(resp)
+            raise PlanLimitError.new(
+              last_status,
+              plan_limit_message(resp),
+              parse_body(resp),
+              response_headers(resp),
+            )
+          end
+
           if RETRYABLE.include?(last_status) && attempt < @max_retries - 1
             sleep(RETRY_BASE_S * (2**attempt))
             next
@@ -616,6 +663,101 @@ module MisarMail
       raise ApiError.new(last_status, "Max retries exceeded")
     end
 
+
+    # Opens an SSE connection and yields each decoded frame.
+    #
+    # Deliberately not retried: replaying a stream that failed mid-flight would
+    # duplicate whatever the caller already consumed.
+    #
+    # @yieldparam [StreamEvent] frame
+    # @return [Enumerator] when no block is given
+    def sse_stream(method, path, data = nil, &block)
+      return enum_for(:sse_stream, method, path, data) unless block_given?
+
+      url = URI.parse(API_BASE + path)
+      http = Net::HTTP.new(url.host, url.port)
+      http.use_ssl = url.scheme == "https"
+      http.read_timeout = @timeout
+
+      req = build_request(method, url, data.nil? ? nil : JSON.generate(data))
+      req["Accept"] = "text/event-stream"
+
+      http.request(req) do |resp|
+        status = resp.code.to_i
+        unless (200..299).cover?(status)
+          raw = resp.read_body.to_s
+          body = begin
+            JSON.parse(raw)
+          rescue JSON::ParserError
+            {}
+          end
+          if body["code"] == "plan_limit_exceeded" || body["upgrade"].is_a?(Hash)
+            raise PlanLimitError.new(status, body["error"] || "plan limit exceeded",
+                                     body, response_headers(resp))
+          end
+          raise ApiError.new(status, body["error"] || (raw.empty? ? "stream error" : raw))
+        end
+
+        buffer = +""
+        event_name = nil
+        data_lines = []
+
+        flush = lambda do
+          next nil if data_lines.empty?
+
+          raw = data_lines.join("\n")
+          name = event_name
+          data_lines = []
+          event_name = nil
+          next :done if raw == "[DONE]"
+
+          decoded = begin
+            JSON.parse(raw)
+          rescue JSON::ParserError
+            nil
+          end
+          StreamEvent.new(name, decoded, raw)
+        end
+
+        resp.read_body do |chunk|
+          buffer << chunk
+          # A frame ends at a blank line; split on it and keep the remainder.
+          while (idx = buffer.index("\n\n") || buffer.index("\r\n\r\n"))
+            frame = buffer.slice!(0, idx)
+            buffer.sub!(/\A(\r?\n){1,2}/, "")
+
+            frame.split(/\r?\n/).each do |line|
+              next if line.empty? || line.start_with?(":") # keepalive
+
+              if line.start_with?("event:")
+                event_name = line.delete_prefix("event:").strip
+              elsif line.start_with?("data:")
+                data_lines << line.delete_prefix("data:").delete_prefix(" ")
+              end
+            end
+
+            result = flush.call
+            return if result == :done
+
+            yield result if result
+          end
+        end
+
+        # A trailing frame with no closing blank line.
+        buffer.split(/\r?\n/).each do |line|
+          next if line.empty? || line.start_with?(":")
+
+          if line.start_with?("event:")
+            event_name = line.delete_prefix("event:").strip
+          elsif line.start_with?("data:")
+            data_lines << line.delete_prefix("data:").delete_prefix(" ")
+          end
+        end
+        tail = flush.call
+        yield tail if tail && tail != :done
+      end
+    end
+
     private
 
     def build_request(method, url, json_body)
@@ -634,6 +776,32 @@ module MisarMail
       req["Accept"]        = "application/json"
       req.body = json_body if json_body
       req
+    end
+
+    # True when the body carries the API's plan-refusal marker.
+    def plan_limit?(resp)
+      body = parse_body(resp)
+      body["code"] == "plan_limit_exceeded" ||
+        body["error_type"] == "plan_limit_exceeded" ||
+        body["upgrade"].is_a?(Hash)
+    end
+
+    def plan_limit_message(resp)
+      parse_body(resp)["error"] || "plan limit exceeded"
+    end
+
+    def parse_body(resp)
+      return {} if resp.body.nil? || resp.body.empty?
+
+      JSON.parse(resp.body)
+    rescue JSON::ParserError
+      {}
+    end
+
+    def response_headers(resp)
+      resp.each_header.to_h
+    rescue StandardError
+      {}
     end
 
     def parse_response(resp, status)

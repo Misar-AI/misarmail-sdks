@@ -265,22 +265,6 @@ type DedicatedIPsListResponse struct {
 	Total int           `json:"total"`
 }
 
-// ── Channels ──────────────────────────────────────────────────────────────────
-
-type WhatsAppMessage struct {
-	To         string            `json:"to"`
-	TemplateID string            `json:"template_id"`
-	Language   string            `json:"language,omitempty"`
-	Variables  map[string]string `json:"variables,omitempty"`
-}
-
-type PushNotification struct {
-	To    []string          `json:"to"`
-	Title string            `json:"title"`
-	Body  string            `json:"body"`
-	Data  map[string]string `json:"data,omitempty"`
-}
-
 // ── A/B Tests ─────────────────────────────────────────────────────────────────
 
 type ABTest struct {
@@ -422,11 +406,11 @@ type KeysListResponse struct {
 // ── Validation ────────────────────────────────────────────────────────────────
 
 type ValidateEmailResponse struct {
-	Valid       bool    `json:"valid"`
-	Disposable  bool    `json:"disposable"`
-	MXFound     bool    `json:"mx_found"`
-	Score       float64 `json:"score"`
-	Suggestion  string  `json:"suggestion"`
+	Valid      bool    `json:"valid"`
+	Disposable bool    `json:"disposable"`
+	MXFound    bool    `json:"mx_found"`
+	Score      float64 `json:"score"`
+	Suggestion string  `json:"suggestion"`
 }
 
 // ── Leads ─────────────────────────────────────────────────────────────────────
@@ -505,9 +489,9 @@ type SalesAgentConfig struct {
 }
 
 type UpdateSalesAgentConfigRequest struct {
-	Name   *string                 `json:"name,omitempty"`
-	Active *bool                   `json:"active,omitempty"`
-	Config map[string]interface{}  `json:"config,omitempty"`
+	Name   *string                `json:"name,omitempty"`
+	Active *bool                  `json:"active,omitempty"`
+	Config map[string]interface{} `json:"config,omitempty"`
 }
 
 type SalesAgentAction struct {
@@ -713,3 +697,62 @@ type NetworkError struct {
 
 func (e *NetworkError) Error() string { return fmt.Sprintf("misarmail: network error: %s", e.Message) }
 func (e *NetworkError) Unwrap() error { return e.Cause }
+
+// PlanLimitError is returned when the subscription attached to the API key
+// blocks the call.
+//
+// MisarMail meters per-plan server-side: a spent allowance answers 429 and a
+// feature that is not on the plan answers 402. Both carry an upgrade offer.
+//
+// It is a distinct type rather than a generic 429 because retrying cannot help
+// until the allowance resets or the plan changes — the client stops retrying as
+// soon as it sees this. Surface UpgradeURL rather than reporting a bare failure.
+type PlanLimitError struct {
+	Status  int
+	Message string
+	// Plan is the account's current plan slug.
+	Plan string
+	// UpgradeURL is the pricing page to send the user to.
+	UpgradeURL string
+	// RetryAfter is seconds until the allowance resets, 0 when not supplied.
+	RetryAfter int
+	// Feature is the allowance that was exhausted.
+	Feature string
+}
+
+func (e *PlanLimitError) Error() string {
+	return fmt.Sprintf("misarmail: plan limit %d: %s (upgrade: %s)", e.Status, e.Message, e.UpgradeURL)
+}
+
+// PlanUsageEntry is one metered feature's standing against its allowance.
+type PlanUsageEntry struct {
+	Feature   string  `json:"feature"`
+	Used      int     `json:"used"`
+	Limit     *int    `json:"limit"` // nil = unlimited
+	Remaining *int    `json:"remaining"`
+	ResetsAt  *string `json:"resets_at,omitempty"`
+}
+
+// PlanUpgradeOffer is attached once a feature is exhausted or locked.
+type PlanUpgradeOffer struct {
+	Feature         string `json:"feature"`
+	Reason          string `json:"reason"`
+	CurrentPlanSlug string `json:"currentPlanSlug"`
+	CurrentPlanName string `json:"currentPlanName"`
+	Used            int    `json:"used,omitempty"`
+	Limit           *int   `json:"limit,omitempty"`
+}
+
+// PlanResponse is the body of GET /plan.
+type PlanResponse struct {
+	Plan struct {
+		Slug string `json:"slug"`
+		Name string `json:"name"`
+	} `json:"plan"`
+	Sending struct {
+		EmailsPerDay   *int `json:"emails_per_day"`
+		EmailsPerMonth *int `json:"emails_per_month"`
+	} `json:"sending"`
+	Usage   []PlanUsageEntry  `json:"usage"`
+	Upgrade *PlanUpgradeOffer `json:"upgrade"`
+}

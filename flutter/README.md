@@ -1,154 +1,96 @@
-# misar_mail_flutter
+# MisarMail Flutter SDK
 
-Official Flutter SDK for the [MisarMail](https://mail.misar.io) email API.
+Official Flutter SDK for the [MisarMail](https://misarmail.com) API — transactional
+send, campaigns, contacts, templates, automations, deliverability, warmup,
+monetization and the two AI streams.
 
-## Installation
+Full reference: [`misarmail.com/docs`](https://misarmail.com/docs).
 
-```yaml
-# pubspec.yaml
-dependencies:
-  misar_mail_flutter:
-    path: ../flutter   # or publish to pub.dev
+## Install
+
+```bash
+flutter pub add misarmail_flutter
 ```
 
-## Initialization
+## Auth
 
-### Option A — Secure Storage (recommended for mobile)
+Use a MisarMail developer key (`msk_…`), created at
+[misarmail.com/developers](https://misarmail.com/developers). It is sent as
+`Authorization: Bearer msk_…`.
 
-Store the key once (e.g. after login):
+Every call is metered against the subscription attached to that key. There is no
+client-side limit checking — the server decides, and the SDK surfaces its answer.
 
-```dart
-import 'package:misar_mail_flutter/misar_mail_flutter.dart';
-
-final store = SecureKeyStore();
-await store.saveApiKey('msk_your_api_key');
-```
-
-Then load it anywhere in your app:
+## Quick start
 
 ```dart
-final client = await MisarMailClient.withSecureStorage();
-```
+import 'package:misarmail_flutter/misarmail_flutter.dart';
 
-The key is persisted in the platform keychain (iOS Keychain / Android Keystore) via `flutter_secure_storage`.
+// Reads the key from platform secure storage (Keychain / Keystore).
+final mail = await MisarMailClient.withSecureStorage();
 
-### Option B — Direct API key
-
-```dart
-final client = MisarMailClient(apiKey: 'msk_your_api_key');
-```
-
-Use this in tests, CI, or server-side Dart environments where secure storage is unavailable.
-
-## Usage
-
-### Send an email
-
-```dart
-await client.sendEmail({
-  'to': 'recipient@example.com',
-  'subject': 'Hello from MisarMail',
-  'html': '<p>Hi there!</p>',
+await mail.email.send({
+  'from': {'email': 'you@yourdomain.com'},
+  'to': [{'email': 'someone@example.com'}],
+  'subject': 'Hello',
+  'html': '<p>Hi there</p>',
 });
 ```
 
-### Contacts
+## Plan limits
+
+Both a spent allowance and a feature that is not on the plan answer **`403`**,
+carrying `code: "plan_limit_exceeded"`. The SDK keys on that code rather than
+the status, which is why a refusal is typed correctly even though 403 is
+otherwise an authorization failure. The SDK raises
+`MisarMailPlanLimitException` for either, and **does not retry** it — retrying cannot
+help until the allowance resets or the plan changes. Read ``upgradeUrl`` to
+send the user somewhere useful.
+
+`GET /plan` returns `plan`, `sending` (the per-day and per-month email caps),
+`usage` — an array with one entry per metered feature, each carrying `used`,
+`limit` and `remaining` — and `upgrade`, which is null until a quota is tight.
+A null `limit` means unlimited, and `remaining` is null alongside it rather than
+0. Read it before an expensive call rather than discovering the ceiling through
+a refusal.
+
+The key needs the `read` or `subscription` scope.
 
 ```dart
-final contacts = await client.contactsList();
-
-await client.contactsCreate({
-  'email': 'new@example.com',
-  'first_name': 'Jane',
-});
-```
-
-### Campaigns
-
-```dart
-final campaigns = await client.campaignsList();
-
-await client.campaignsCreate({
-  'name': 'Spring Launch',
-  'subject': 'Big news!',
-  'template_id': 'tmpl_abc',
-});
-```
-
-### Analytics
-
-```dart
-final stats = await client.analyticsGet('camp_abc123');
-print(stats['opens']);
-```
-
-### Validate an email address
-
-```dart
-final result = await client.validateEmail('user@example.com');
-print(result['valid']); // true | false
-```
-
-### Templates
-
-```dart
-final templates = await client.templatesList();
-
-final rendered = await client.templatesRender('tmpl_abc', {
-  'first_name': 'Alice',
-  'promo_code': 'SAVE20',
-});
-print(rendered['html']);
-```
-
-### Tracking
-
-```dart
-await client.trackEvent({'event': 'button_click', 'email': 'u@example.com'});
-await client.trackPurchase({'amount': 4999, 'email': 'u@example.com'});
-```
-
-### Other endpoints
-
-```dart
-await client.keysList();
-await client.abTestsList();
-await client.sandboxList();
-await client.inboundList();
-```
-
-## Error handling
-
-```dart
-import 'package:misar_mail_flutter/misar_mail_flutter.dart';
+final plan = await mail.plan.get();
 
 try {
-  await client.sendEmail({...});
-} on MisarMailException catch (e) {
-  print('API error ${e.statusCode}: ${e.message}');
-} on MisarMailNetworkException catch (e) {
-  print('Network error: ${e.message}');
+  await mail.campaigns.create({
+    'name': 'Blast',
+    'subject': 'We just shipped',
+    'fromName': 'Your Name',
+    'fromEmail': 'you@yourdomain.com',
+  });
+} on MisarMailPlanLimitException catch (e) {
+  debugPrint('${e.feature} exhausted on ${e.plan}: ${e.upgradeUrl}');
 }
 ```
 
-Requests failing with status `429 500 502 503 504` are retried up to 3 times with exponential backoff (`500ms × 2^attempt`).
+## Streaming
 
-## SecureKeyStore API
+Two endpoints stream Server-Sent Events. Both sit **outside** `/v1`, which the
+SDK handles for you:
 
-| Method | Description |
-|--------|-------------|
-| `saveApiKey(String key)` | Persists the key in the platform keychain |
-| `loadApiKey()` | Returns the stored key or `null` |
-| `deleteApiKey()` | Removes the stored key (use on logout) |
+| Method | Route |
+| --- | --- |
+| `streaming.generateEmail` | `POST /api/ai/generate-email/stream` |
+| `streaming.campaignSend` | `GET /api/campaigns/{id}/send-stream` |
 
-## Running tests
+Frames are unnamed (`data: {…}`) and the stream ends with `data: [DONE]`, which
+the SDK consumes rather than handing on. A stream is never retried: replaying one
+that failed mid-flight would duplicate whatever you had already read.
 
-```bash
-flutter test
+```dart
+await for (final chunk in mail.streaming.generateEmail({'prompt': 'a launch email'})) {
+  setState(() => _draft += chunk.data['delta'] ?? '');
+}
 ```
 
-Mocks are generated with `build_runner`:
+## License
 
-```bash
-flutter pub run build_runner build --delete-conflicting-outputs
-```
+MIT — see [LICENSE](LICENSE).

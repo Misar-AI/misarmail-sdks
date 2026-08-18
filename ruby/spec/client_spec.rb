@@ -1,7 +1,7 @@
 require "spec_helper"
 
 RSpec.describe MisarMail::Client do
-  let(:base_url) { "https://mail.misar.io/api/v1" }
+  let(:base_url) { "https://api.misar.io/mail/v1" }
   let(:client) { described_class.new(api_key: "test-key", base_url: base_url, max_retries: 1) }
 
   def stub_get(path, status:, body:)
