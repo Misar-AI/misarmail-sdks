@@ -1,12 +1,34 @@
 name: Validate & Tag Go SDK
+
+# Go modules are served directly from GitHub — proxy.golang.org and pkg.go.dev
+# index on the git tag, so there is nothing to upload and no credential to
+# hold. This job is the gate that the tagged commit actually compiles.
+#
+# Callable as a reusable workflow so auto-tag.yml can invoke it in its own run
+# (a tag pushed with the default GITHUB_TOKEN never fires `push: tags`).
+# auto-tag.yml does not currently tag go/: the module carries no version
+# manifest to derive a version from, so go tags are still cut by hand.
 on:
   push:
     tags: ['go/v*']
   workflow_dispatch:
-# Go modules are served directly from GitHub — pkg.go.dev auto-indexes on git tag.
+    inputs:
+      version:
+        description: 'Version being validated (informational — the git tag is the release)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being validated (informational — the git tag is the release)'
+        required: false
+        type: string
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

@@ -1,17 +1,68 @@
 name: Publish Flutter SDK
+
+# Callable as a reusable workflow so auto-tag.yml can invoke it in its own run:
+# a tag pushed with the default GITHUB_TOKEN never fires `push: tags`, so the
+# tag-driven path alone had never once published. See auto-tag.yml.
 on:
   push:
     tags: ['flutter/v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version being released (informational — pub reads flutter/pubspec.yaml)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being released (informational — pub reads flutter/pubspec.yaml)'
+        required: false
+        type: string
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      # Fail before the build, with the name of the missing secret.
+      - name: Preflight — required credentials
+        env:
+          PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PUB_CREDENTIALS:-}" ]; then
+            echo "::error::PUB_CREDENTIALS is not set for this repository — the misarmail_flutter package cannot be published to pub.dev. Add it under Settings → Secrets and variables → Actions → Repository secrets (the full contents of ~/.config/dart/pub-credentials.json after 'dart pub login')."
+            exit 1
+          fi
+          echo "PUB_CREDENTIALS is present (secret values are never printed)."
+
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.x'
           channel: 'stable'
+
+      # `dart pub publish` reads a credentials FILE; the old env-var-only form
+      # was silently ignored and the upload could only fail unauthenticated.
+      - name: Install pub.dev credentials
+        env:
+          PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          CREDS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/dart"
+          CACHE_DIR="${PUB_CACHE:-$HOME/.pub-cache}"
+          mkdir -p "$CREDS_DIR" "$CACHE_DIR"
+          printf '%s' "$PUB_CREDENTIALS" > "$CREDS_DIR/pub-credentials.json"
+          chmod 600 "$CREDS_DIR/pub-credentials.json"
+          # Older SDKs look in $PUB_CACHE/credentials.json instead.
+          cp "$CREDS_DIR/pub-credentials.json" "$CACHE_DIR/credentials.json"
+          if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$CREDS_DIR/pub-credentials.json" 2>/dev/null; then
+            echo "::error::PUB_CREDENTIALS is not valid JSON — re-copy ~/.config/dart/pub-credentials.json verbatim from a machine where 'dart pub login' succeeded."
+            exit 1
+          fi
+          echo "Credentials installed."
+
       - run: flutter pub get
         working-directory: flutter
       - run: flutter analyze
@@ -20,5 +71,3 @@ jobs:
         working-directory: flutter
       - run: dart pub publish --force
         working-directory: flutter
-        env:
-          PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}

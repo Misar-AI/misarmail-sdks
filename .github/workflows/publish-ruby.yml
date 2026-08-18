@@ -1,12 +1,42 @@
 name: Publish Ruby SDK
+
+# Callable as a reusable workflow so auto-tag.yml can invoke it in its own run:
+# a tag pushed with the default GITHUB_TOKEN never fires `push: tags`, so the
+# tag-driven path alone had never once published. See auto-tag.yml.
 on:
   push:
     tags: ['ruby/v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version being released (informational — gem reads ruby/misar_mail.gemspec)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being released (informational — gem reads ruby/misar_mail.gemspec)'
+        required: false
+        type: string
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      # Fail before the build, with the name of the missing secret.
+      - name: Preflight — required credentials
+        env:
+          RUBYGEMS_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RUBYGEMS_API_KEY:-}" ]; then
+            echo "::error::RUBYGEMS_API_KEY is not set for this repository — the misarmail gem cannot be pushed. Add it under Settings → Secrets and variables → Actions → Repository secrets."
+            exit 1
+          fi
+          echo "RUBYGEMS_API_KEY is present (secret values are never printed)."
+
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:

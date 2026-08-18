@@ -1,19 +1,76 @@
 name: Publish C# SDK
+
+# Callable as a reusable workflow so auto-tag.yml can invoke it in its own run:
+# a tag pushed with the default GITHUB_TOKEN never fires `push: tags`, so the
+# tag-driven path alone had never once published. See auto-tag.yml.
+#
+# This is the one SDK whose version comes from the ref rather than a manifest
+# read by the packaging tool, so the version has to be an explicit input:
+# when called (or dispatched) GITHUB_REF_NAME is `main`, not `csharp/vX.Y.Z`.
 on:
   push:
     tags: ['csharp/v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to pack (defaults to the tag, then to <Version> in the csproj)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to pack (defaults to the tag, then to <Version> in the csproj)'
+        required: false
+        type: string
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      # Fail before the build, with the name of the missing secret.
+      - name: Preflight — required credentials
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NUGET_API_KEY:-}" ]; then
+            echo "::error::NUGET_API_KEY is not set for this repository — the MisarMail package cannot be pushed to NuGet. Add it under Settings → Secrets and variables → Actions → Repository secrets."
+            exit 1
+          fi
+          echo "NUGET_API_KEY is present (secret values are never printed)."
+
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Extract version from tag
+
+      - name: Resolve version
         id: ver
-        run: echo "VERSION=${GITHUB_REF_NAME#csharp/v}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="${INPUT_VERSION:-}"
+          # Guard on the VALUE at every step, never on an exit status: a
+          # parameter expansion that misses and a grep that finds nothing both
+          # hand back an empty string with a zero status, so `|| fallback`
+          # never fires. That trap already minted tags named "<lang>/v" here.
+          if [ -z "$VERSION" ] && [ "${GITHUB_REF_NAME}" != "${GITHUB_REF_NAME#csharp/v}" ]; then
+            VERSION="${GITHUB_REF_NAME#csharp/v}"
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION=$(grep -h -m1 '<Version>' csharp/*.csproj 2>/dev/null \
+              | grep -oE '[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?' | head -1 || true)
+          fi
+          if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::Cannot determine the version to publish (got '${VERSION}'). Pass it as the workflow input, or set <Version> in csharp/MisarMail.csproj."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "::notice::Packing MisarMail ${VERSION}"
+
       - run: dotnet test
         working-directory: csharp
       - run: dotnet pack -c Release -p:PackageVersion=${{ steps.ver.outputs.VERSION }} -o ./nupkg

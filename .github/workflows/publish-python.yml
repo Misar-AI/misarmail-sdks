@@ -1,8 +1,24 @@
 name: Publish Python SDK
+
+# Callable as a reusable workflow so auto-tag.yml can invoke it in its own run:
+# a tag pushed with the default GITHUB_TOKEN never fires `push: tags`, so the
+# tag-driven path alone had never once published. See auto-tag.yml.
 on:
   push:
     tags: ['python/v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version being released (informational — build reads python/pyproject.toml)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being released (informational — build reads python/pyproject.toml)'
+        required: false
+        type: string
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -10,6 +26,22 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # Python is the one SDK here where an absent secret is legitimately not
+      # fatal: PyPI accepts an OIDC trusted publisher instead of a token, and
+      # `id-token: write` above is that credential. So this reports which path
+      # will be taken rather than failing. Either way the upload step below
+      # fails hard on a bad credential — it never exits 0 without uploading.
+      - name: Preflight — credential path
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PYPI_API_TOKEN:-}" ]; then
+            echo "::notice::Publishing to PyPI with PYPI_API_TOKEN (value never printed)."
+          else
+            echo "::notice::PYPI_API_TOKEN is not set — falling back to OIDC trusted publishing. That requires a trusted publisher on pypi.org for Misar-AI/misarmail-sdks + publish-python.yml; without it this run FAILS at the upload step."
+          fi
+
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -22,6 +54,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: python/dist/
-          # OIDC trusted publisher — configure on PyPI dashboard (no token needed).
-          # Fallback: set PYPI_API_TOKEN secret and uncomment:
-          # password: ${{ secrets.PYPI_API_TOKEN }}
+          # An empty password makes the action use OIDC trusted publishing, so
+          # this one line covers both paths: token when the secret exists,
+          # trusted publisher when it does not.
+          password: ${{ secrets.PYPI_API_TOKEN }}

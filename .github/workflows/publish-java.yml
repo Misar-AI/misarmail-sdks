@@ -1,12 +1,54 @@
 name: Publish Java SDK
+
+# Callable as a reusable workflow so auto-tag.yml can invoke it in its own run:
+# a tag pushed with the default GITHUB_TOKEN never fires `push: tags`, so the
+# tag-driven path alone had never once published. See auto-tag.yml.
 on:
   push:
     tags: ['java/v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version being released (informational — maven reads java/pom.xml)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being released (informational — maven reads java/pom.xml)'
+        required: false
+        type: string
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      # Maven Central needs both an OSSRH login and a GPG signing key; a
+      # deploy missing either one fails deep inside maven with an error that
+      # does not name the secret. Name it here, before anything else runs.
+      - name: Preflight — required credentials
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${OSSRH_USERNAME:-}" ]  || missing="$missing OSSRH_USERNAME"
+          [ -n "${OSSRH_TOKEN:-}" ]     || missing="$missing OSSRH_TOKEN"
+          [ -n "${GPG_PRIVATE_KEY:-}" ] || missing="$missing GPG_PRIVATE_KEY"
+          [ -n "${GPG_PASSPHRASE:-}" ]  || missing="$missing GPG_PASSPHRASE"
+          if [ -n "$missing" ]; then
+            for s in $missing; do
+              echo "::error::${s} is not set for this repository — io.misar:misarmail cannot be deployed to Maven Central. Add it under Settings → Secrets and variables → Actions → Repository secrets."
+            done
+            exit 1
+          fi
+          echo "All Maven Central credentials are present (secret values are never printed)."
+
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:

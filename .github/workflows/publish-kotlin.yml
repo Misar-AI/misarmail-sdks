@@ -1,12 +1,56 @@
 name: Publish Kotlin SDK
+
+# Callable as a reusable workflow so auto-tag.yml can invoke it in its own run:
+# a tag pushed with the default GITHUB_TOKEN never fires `push: tags`, so the
+# tag-driven path alone had never once published. See auto-tag.yml.
 on:
   push:
     tags: ['kotlin/v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version being released (informational — gradle reads kotlin/build.gradle.kts)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being released (informational — gradle reads kotlin/build.gradle.kts)'
+        required: false
+        type: string
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      # Sonatype login + signing key. Gradle's nexus plugin will happily run a
+      # "successful" build that staged nothing when these are blank, which is
+      # exactly the green-but-published-nothing failure this repo suffered.
+      - name: Preflight — required credentials
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${OSSRH_USERNAME:-}" ]  || missing="$missing OSSRH_USERNAME"
+          [ -n "${OSSRH_TOKEN:-}" ]     || missing="$missing OSSRH_TOKEN"
+          [ -n "${GPG_KEY_ID:-}" ]      || missing="$missing GPG_KEY_ID"
+          [ -n "${GPG_PRIVATE_KEY:-}" ] || missing="$missing GPG_PRIVATE_KEY"
+          [ -n "${GPG_PASSPHRASE:-}" ]  || missing="$missing GPG_PASSPHRASE"
+          if [ -n "$missing" ]; then
+            for s in $missing; do
+              echo "::error::${s} is not set for this repository — io.misar:misarmail (Kotlin) cannot be published to Sonatype. Add it under Settings → Secrets and variables → Actions → Repository secrets."
+            done
+            exit 1
+          fi
+          echo "All Sonatype credentials are present (secret values are never printed)."
+
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:

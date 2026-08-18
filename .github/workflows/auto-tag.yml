@@ -1,8 +1,20 @@
-name: Auto-tag on SDK sync
+name: Auto-tag and publish changed SDKs
 
-# Tagging IS releasing: each publish-<lang>.yml triggers on the tag this job
-# creates, so a tag pushed here goes straight to the registry. This repository
-# has live registry credentials, so that path is armed.
+# Tagging IS releasing: this workflow tags each changed SDK and then, in the
+# SAME run, calls that language's publish-<lang>.yml as a reusable workflow.
+#
+# WHY IT IS SHAPED LIKE THIS. It used to just push tags and rely on each
+# publish-<lang>.yml's `push: tags:` trigger. A tag pushed with the default
+# GITHUB_TOKEN does not raise a workflow-triggering event — GitHub suppresses
+# those so workflows cannot retrigger themselves — so the tags landed, nothing
+# published, and this job went green. The old fix was a RELEASE_TOKEN PAT,
+# which was never configured, so every release since has been a no-op. Calling
+# the publish workflows directly keeps everything inside one run: there is no
+# cross-workflow event to suppress and no PAT to own, rotate or leak.
+#
+# `jobs.<id>.uses:` cannot be built from a shell variable, so there is one
+# hard-coded, gated job per language below and the tagging step publishes a
+# `publish_<lang>` output that gates it. Adding a language means adding a job.
 #
 # SAFETY GATE — the repository variable SDK_PUBLISH_TARGETS decides which
 # languages may be tagged, and therefore which may publish:
@@ -14,112 +26,236 @@ name: Auto-tag on SDK sync
 # It defaults to off because a sync that touches every SDK directory would
 # otherwise release every package at once, and a published version can never
 # be replaced. Enable one language, confirm it on the registry, then widen.
+#
+# A language publishes only when a NEW tag is cut in this run. If the tag
+# already exists nothing happens, because re-publishing an existing version is
+# an error at every registry. To release a version whose tag already exists —
+# which is the case for every v1.0.0 tag in this repo, none of which ever
+# reached a registry — run publish-<lang>.yml from the Actions tab.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+# These bound what the CALLED workflows may request: a reusable workflow's
+# GITHUB_TOKEN can only be equal to or more restrictive than its caller's, so
+# id-token has to be granted here or publish-typescript (npm provenance) and
+# publish-python (PyPI trusted publishing) quietly lose it.
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
   tag:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      typescript: ${{ steps.tag.outputs.publish_typescript }}
+      typescript_version: ${{ steps.tag.outputs.version_typescript }}
+      python: ${{ steps.tag.outputs.publish_python }}
+      python_version: ${{ steps.tag.outputs.version_python }}
+      rust: ${{ steps.tag.outputs.publish_rust }}
+      rust_version: ${{ steps.tag.outputs.version_rust }}
+      ruby: ${{ steps.tag.outputs.publish_ruby }}
+      ruby_version: ${{ steps.tag.outputs.version_ruby }}
+      java: ${{ steps.tag.outputs.publish_java }}
+      java_version: ${{ steps.tag.outputs.version_java }}
+      kotlin: ${{ steps.tag.outputs.publish_kotlin }}
+      kotlin_version: ${{ steps.tag.outputs.version_kotlin }}
+      csharp: ${{ steps.tag.outputs.publish_csharp }}
+      csharp_version: ${{ steps.tag.outputs.version_csharp }}
+      dart: ${{ steps.tag.outputs.publish_dart }}
+      dart_version: ${{ steps.tag.outputs.version_dart }}
+      flutter: ${{ steps.tag.outputs.publish_flutter }}
+      flutter_version: ${{ steps.tag.outputs.version_flutter }}
     steps:
       - uses: actions/checkout@v4
         with:
+          # Full history so the tag list is complete and HEAD~1 exists.
           fetch-depth: 0
-          # A tag pushed with the default GITHUB_TOKEN does NOT start another
-          # workflow — GitHub suppresses those events to stop workflows
-          # retriggering themselves. Every publish-<lang>.yml here triggers on
-          # `push: tags:`, so with GITHUB_TOKEN the tag lands and nothing
-          # publishes, silently and with this job still reporting success.
-          # RELEASE_TOKEN (a PAT with `contents: write`) is what makes the
-          # chain actually fire.
-          token: ${{ secrets.RELEASE_TOKEN || github.token }}
 
       - name: Tag changed SDKs
+        id: tag
         env:
           TARGETS: ${{ vars.SDK_PUBLISH_TARGETS }}
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          GATE=",$(echo "${TARGETS:-}" | tr -d '[:space:]'),"
+          set -euo pipefail
 
-          if [ -z "${RELEASE_TOKEN:-}" ]; then
-            echo "::warning::RELEASE_TOKEN is not set — tags will be created with GITHUB_TOKEN, which cannot trigger publish-<lang>.yml. Nothing will publish; each SDK would need its publish workflow run by hand."
-          else
-            echo "RELEASE_TOKEN present — tags will trigger publish-<lang>.yml."
-          fi
+          # go, php and swift are absent on purpose: none carries a version
+          # manifest, because for all three the git tag IS the release
+          # (proxy.golang.org, Packagist and SwiftPM each read the tag). There
+          # is nothing here to derive a version from, so they are tagged by
+          # hand and split-standalone.yml takes it from there.
+          LANGS="typescript python rust ruby java kotlin csharp dart flutter"
+
+          GATE=",$(printf '%s' "${TARGETS:-}" | tr -d '[:space:]'),"
           if [ "$GATE" = ",," ]; then
-            echo "::notice::SDK_PUBLISH_TARGETS is unset — DRY RUN, nothing will be tagged or published."
+            echo "::notice::SDK_PUBLISH_TARGETS is unset — DRY RUN: nothing will be tagged and nothing will publish."
           else
-            echo "::notice::Tagging enabled for: ${TARGETS}"
+            echo "::notice::Publishing gate open for: ${TARGETS}"
           fi
 
-          # Determine changed dirs (handle first-ever push gracefully)
-          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            CHANGED=$(git ls-files --others --cached | head -1 && git diff --name-only HEAD~1 HEAD 2>/dev/null || git show --name-only --format="" HEAD)
-          else
-            CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          # Work out what changed. Guard on the VALUE of BEFORE: it is empty on
+          # workflow_dispatch and all zeros on a branch's first push, and in
+          # both cases `git diff "$BEFORE" HEAD` prints nothing while exiting
+          # 0 — so an exit-status test would never notice.
+          BASE=""
+          if [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            if git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              BASE="$BEFORE"
+            fi
           fi
-          echo "Changed files: $CHANGED"
+          if [ -z "$BASE" ] && git rev-parse -q --verify HEAD~1 >/dev/null; then
+            BASE="HEAD~1"
+          fi
+          if [ -n "$BASE" ]; then
+            CHANGED=$(git diff --name-only "$BASE" HEAD)
+          else
+            CHANGED=$(git show --name-only --format="" HEAD)
+          fi
+          echo "Comparing against: ${BASE:-<root commit>}"
+          printf 'Changed files:\n%s\n' "$CHANGED"
 
           extract_version() {
-            local lang=$1
-            case $lang in
-              typescript|cli|solidity)
-                jq -r '.version // "0.1.0"' ${lang}/package.json 2>/dev/null || echo "0.1.0" ;;
-              python)
-                grep '^version' python/pyproject.toml 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"' | head -1 || echo "0.1.0" ;;
-              rust)
-                grep '^version' rust/Cargo.toml 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"' | head -1 || echo "0.1.0" ;;
-              ruby)
-                grep -h 's\.version\|spec\.version' ruby/*.gemspec 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"' | head -1 || echo "0.1.0" ;;
-              java)
-                grep '<version>' java/pom.xml 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.1.0" ;;
-              kotlin)
-                grep '^version' kotlin/build.gradle.kts 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"' | head -1 || echo "0.1.0" ;;
-              csharp)
-                grep '<Version>' csharp/*.csproj 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.1.0" ;;
-              dart|flutter)
-                grep '^version' ${lang}/pubspec.yaml 2>/dev/null | awk '{print $2}' | head -1 || echo "0.1.0" ;;
-              *)
-                cat ${lang}/VERSION 2>/dev/null | tr -d '[:space:]' || echo "0.1.0" ;;
+            local lang="$1" raw=""
+            case "$lang" in
+              typescript)   raw=$(jq -r '.version // empty' typescript/package.json 2>/dev/null || true) ;;
+              python)       raw=$(grep -m1 -E '^[[:space:]]*version[[:space:]]*=' python/pyproject.toml 2>/dev/null || true) ;;
+              rust)         raw=$(grep -m1 -E '^[[:space:]]*version[[:space:]]*=' rust/Cargo.toml 2>/dev/null || true) ;;
+              ruby)         raw=$(grep -h -m1 -E '\.version[[:space:]]*=' ruby/*.gemspec 2>/dev/null || true) ;;
+              java)         raw=$(grep -m1 '<version>' java/pom.xml 2>/dev/null || true) ;;
+              kotlin)       raw=$(grep -m1 -E '^version[[:space:]]*=' kotlin/build.gradle.kts 2>/dev/null || true) ;;
+              csharp)       raw=$(grep -h -m1 '<Version>' csharp/*.csproj 2>/dev/null || true) ;;
+              dart|flutter) raw=$(grep -m1 -E '^version:' "${lang}/pubspec.yaml" 2>/dev/null || true) ;;
             esac
+            # One rule for every language: the first semver-shaped token on the
+            # line we found. There is deliberately no `|| echo "0.1.0"`
+            # fallback — the old one could not fire (it tested a pipeline whose
+            # last stage exits 0 on empty input) and if it ever had, it would
+            # have tagged a version nobody released. A miss returns empty and
+            # the caller refuses to tag.
+            grep -m1 -oE '[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?' <<< "$raw" | head -1 || true
           }
 
           git config user.email "ci@misar.io"
           git config user.name "Misar CI"
 
-          # go, php and swift are deliberately absent: none of them carries a
-          # version manifest, because for all three the git tag IS the release
-          # (proxy.golang.org, Packagist and SwiftPM each read the tag). There
-          # is nothing here to derive a version from, so they are tagged by hand.
-          # c/cpp/cli/solidity are gone — those directories no longer exist.
-          for lang in typescript python rust ruby java kotlin csharp dart flutter; do
-            if echo "$CHANGED" | grep -qE "^${lang}/"; then
-              VERSION=$(extract_version $lang)
-              # extract_version returns EMPTY on a miss, not the "0.1.0" its
-              # `|| echo` suggests: `||` tests the pipeline's status and the
-              # trailing tr/grep/head exits 0 even on empty input. Unguarded
-              # that produced tags literally named "<lang>/v", which then match
-              # publish-<lang>.yml's `*/v*` trigger while failing its regex.
-              if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+          for lang in $LANGS; do
+            VERSION=""
+            DECISION="unchanged"
+
+            if grep -qE "^${lang}/" <<< "$CHANGED"; then
+              VERSION=$(extract_version "$lang")
+              if ! grep -qE '^[0-9]+\.[0-9]+\.[0-9]+' <<< "$VERSION"; then
                 echo "::warning::${lang}: no usable version (got '${VERSION}') — not tagging."
                 echo "- \`${lang}\` skipped: no usable version" >> "$GITHUB_STEP_SUMMARY"
-                continue
-              fi
-              TAG="${lang}/v${VERSION}"
-              if git tag | grep -qx "$TAG"; then
-                echo "⏭  Tag $TAG already exists, skipping."
-              elif ! echo "$GATE" | grep -q ",${lang}," && ! echo "$GATE" | grep -q ",all,"; then
-                echo "🔒 Would tag $TAG — skipped, ${lang} is not in SDK_PUBLISH_TARGETS."
-                echo "- \`$TAG\` withheld (gate)" >> "$GITHUB_STEP_SUMMARY"
+                VERSION=""
+                DECISION="no-version"
               else
-                echo "🏷  Creating tag $TAG"
-                git tag "$TAG"
-                git push origin "$TAG"
-                echo "- \`$TAG\` tagged → publish-${lang}.yml will run" >> "$GITHUB_STEP_SUMMARY"
+                TAG="${lang}/v${VERSION}"
+                # rev-parse, not `git tag | grep`: with pipefail a grep -q that
+                # matches can SIGPIPE the writer and turn a found tag into a
+                # non-zero pipeline, i.e. "not found".
+                if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+                  DECISION="already-tagged"
+                  echo "⏭  ${TAG} already exists — not re-releasing."
+                  echo "- \`${TAG}\` already exists — bump the version, or run publish-${lang}.yml by hand to release it" >> "$GITHUB_STEP_SUMMARY"
+                elif ! grep -qE ",(${lang}|all)," <<< "$GATE"; then
+                  DECISION="gated"
+                  echo "🔒 Would tag ${TAG} — ${lang} is not in SDK_PUBLISH_TARGETS."
+                  echo "- \`${TAG}\` withheld (gate)" >> "$GITHUB_STEP_SUMMARY"
+                else
+                  echo "🏷  Creating tag ${TAG}"
+                  git tag "$TAG"
+                  git push origin "$TAG"
+                  DECISION="tagged"
+                  echo "- \`${TAG}\` tagged → publish-${lang}.yml runs in this workflow" >> "$GITHUB_STEP_SUMMARY"
+                fi
               fi
             fi
+
+            if [ "$DECISION" = "tagged" ]; then PUBLISH=true; else PUBLISH=false; fi
+            {
+              echo "publish_${lang}=${PUBLISH}"
+              echo "version_${lang}=${VERSION}"
+            } >> "$GITHUB_OUTPUT"
+            echo "${lang}: ${DECISION} (publish=${PUBLISH}, version=${VERSION:-none})"
           done
+
+  # One gated job per language. `uses:` cannot be templated, so this list is
+  # written out; `secrets: inherit` hands the called workflow the registry
+  # credentials it preflights for.
+  typescript:
+    needs: tag
+    if: needs.tag.outputs.typescript == 'true'
+    uses: ./.github/workflows/publish-typescript.yml
+    with:
+      version: ${{ needs.tag.outputs.typescript_version }}
+    secrets: inherit
+
+  python:
+    needs: tag
+    if: needs.tag.outputs.python == 'true'
+    uses: ./.github/workflows/publish-python.yml
+    with:
+      version: ${{ needs.tag.outputs.python_version }}
+    secrets: inherit
+
+  rust:
+    needs: tag
+    if: needs.tag.outputs.rust == 'true'
+    uses: ./.github/workflows/publish-rust.yml
+    with:
+      version: ${{ needs.tag.outputs.rust_version }}
+    secrets: inherit
+
+  ruby:
+    needs: tag
+    if: needs.tag.outputs.ruby == 'true'
+    uses: ./.github/workflows/publish-ruby.yml
+    with:
+      version: ${{ needs.tag.outputs.ruby_version }}
+    secrets: inherit
+
+  java:
+    needs: tag
+    if: needs.tag.outputs.java == 'true'
+    uses: ./.github/workflows/publish-java.yml
+    with:
+      version: ${{ needs.tag.outputs.java_version }}
+    secrets: inherit
+
+  kotlin:
+    needs: tag
+    if: needs.tag.outputs.kotlin == 'true'
+    uses: ./.github/workflows/publish-kotlin.yml
+    with:
+      version: ${{ needs.tag.outputs.kotlin_version }}
+    secrets: inherit
+
+  csharp:
+    needs: tag
+    if: needs.tag.outputs.csharp == 'true'
+    uses: ./.github/workflows/publish-csharp.yml
+    with:
+      version: ${{ needs.tag.outputs.csharp_version }}
+    secrets: inherit
+
+  dart:
+    needs: tag
+    if: needs.tag.outputs.dart == 'true'
+    uses: ./.github/workflows/publish-dart.yml
+    with:
+      version: ${{ needs.tag.outputs.dart_version }}
+    secrets: inherit
+
+  flutter:
+    needs: tag
+    if: needs.tag.outputs.flutter == 'true'
+    uses: ./.github/workflows/publish-flutter.yml
+    with:
+      version: ${{ needs.tag.outputs.flutter_version }}
+    secrets: inherit

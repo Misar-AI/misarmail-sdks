@@ -1,9 +1,7 @@
 name: Validate & Tag Swift SDK
-on:
-  push:
-    tags: ['swift/v*']
-  workflow_dispatch:
-# SPM resolves directly from GitHub tags — the tag itself is the "publish".
+
+# SPM resolves directly from GitHub tags — the tag itself is the "publish", so
+# there is no registry upload and no credential.
 #
 # Consumers depend on misarmail-swift, NOT this monorepo: SwiftPM requires
 # Package.swift at the repository root and cannot resolve a subdirectory.
@@ -11,9 +9,32 @@ on:
 # SPM actually resolves; this job is the gate that it compiles and passes
 # tests first.
 # Consumers add: .package(url: "https://github.com/Misar-AI/misarmail-swift.git", from: "1.0.0")
+#
+# Callable as a reusable workflow so auto-tag.yml can invoke it in its own run
+# (a tag pushed with the default GITHUB_TOKEN never fires `push: tags`).
+# auto-tag.yml does not currently tag swift/: there is no version manifest to
+# derive a version from, so swift tags are still cut by hand.
+on:
+  push:
+    tags: ['swift/v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version being validated (informational — the git tag is the release)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being validated (informational — the git tag is the release)'
+        required: false
+        type: string
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Linux on purpose: URLSession's async data(for:)/bytes(for:) do not exist in
     # swift-corelibs-foundation, so a macOS build passes while the package is
     # unusable there. That gap reached main once already.

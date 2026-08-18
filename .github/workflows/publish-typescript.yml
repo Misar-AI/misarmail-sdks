@@ -1,8 +1,32 @@
 name: Publish TypeScript SDK
+
+# Three doors, one body:
+#   push: tags        — a tag pushed by a human or a PAT still releases directly.
+#   workflow_dispatch — release/retry by hand from the Actions tab.
+#   workflow_call     — auto-tag.yml calls this inside its OWN run.
+#
+# The third one is why this file changed. A tag pushed with the default
+# GITHUB_TOKEN never raises a `push: tags` event — GitHub suppresses those to
+# stop workflows retriggering themselves — so auto-tag.yml's tags landed and
+# nothing ever published, with the tagging job still reporting success. Calling
+# this workflow directly keeps everything in one run, so no event has to cross a
+# workflow boundary and no RELEASE_TOKEN PAT is needed.
 on:
   push:
     tags: ['typescript/v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version being released (informational — npm reads typescript/package.json)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being released (informational — npm reads typescript/package.json)'
+        required: false
+        type: string
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -10,6 +34,20 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # First step on purpose: a missing credential is a configuration bug, and
+      # it must stop the run with the name of the thing to fix — never a green
+      # run that published nothing, and never after ten minutes of tests.
+      - name: Preflight — required credentials
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN is not set for this repository — @misarmail/sdk cannot be published. Add it under Settings → Secrets and variables → Actions → Repository secrets."
+            exit 1
+          fi
+          echo "NPM_TOKEN is present (secret values are never printed)."
+
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -21,6 +59,9 @@ jobs:
         working-directory: typescript
       - run: npm test
         working-directory: typescript
+      # If this fails with E404 on a package that does not exist yet, the token
+      # is a granular token without rights to CREATE packages in the @misarmail
+      # scope — widen the token, do not work around it.
       - run: npm publish --access public --provenance
         working-directory: typescript
         env:
