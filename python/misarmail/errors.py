@@ -1,12 +1,45 @@
+from __future__ import annotations
+
+from typing import Any
+
+
 class MisarMailError(Exception):
-    def __init__(self, status: int, message: str, error_type: str = "api_error"):
+    def __init__(
+        self,
+        status: int,
+        message: str,
+        error_type: str = "api_error",
+        details: Any | None = None,
+    ) -> None:
         self.status = status
         self.error_type = error_type
+        self.details = details
         super().__init__(f"misar-mail: API error {status} ({error_type}): {message}")
+
+    @property
+    def is_unauthorized(self) -> bool:
+        """The key was rejected: missing, revoked, expired, or wrong product."""
+        return self.status == 401
+
+    @property
+    def is_plan_denied(self) -> bool:
+        """The key is valid but the account's subscription does not cover this call.
+
+        Either the feature is not in the plan, a plan limit is exhausted, or a
+        volume ceiling was hit. Gating is decided server-side from the
+        subscription behind the key, so this is the signal to prompt an upgrade
+        — without parsing error strings.
+        """
+        return self.status in (402, 403, 429)
+
+    @property
+    def is_retryable(self) -> bool:
+        """Worth retrying as-is: transient server or rate-limit conditions."""
+        return self.status == 429 or 500 <= self.status < 600
 
 
 class MisarMailNetworkError(MisarMailError):
-    def __init__(self, message: str, cause: Exception | None = None):
+    def __init__(self, message: str, cause: Exception | None = None) -> None:
         self.cause = cause
         super().__init__(0, message, "network_error")
 

@@ -1,58 +1,46 @@
 package io.misar.mail;
 
-/**
- * Thrown when the MisarMail API returns a non-2xx HTTP response, or when a
- * network-level error prevents the request from completing.
- *
- * <p>For network errors the {@code status} is {@code 0}.
- */
+/** Raised for any non-2xx response, and for transport failures with status 0. */
 public class MisarMailException extends Exception {
 
-    private final int status;
+  private final int status;
+  private final String errorType;
 
-    /**
-     * @param status  HTTP status code (0 for network errors).
-     * @param message Human-readable description.
-     */
-    public MisarMailException(int status, String message) {
-        super("MisarMailException(" + status + "): " + message);
-        this.status = status;
-    }
+  public MisarMailException(int status, String message, String errorType) {
+    super("misar-mail: API error " + status + " (" + errorType + "): " + message);
+    this.status = status;
+    this.errorType = errorType;
+  }
 
-    /**
-     * @param status  HTTP status code (0 for network errors).
-     * @param message Human-readable description.
-     * @param cause   Underlying throwable.
-     */
-    public MisarMailException(int status, String message, Throwable cause) {
-        super("MisarMailException(" + status + "): " + message, cause);
-        this.status = status;
-    }
+  public int status() {
+    return status;
+  }
 
-    /**
-     * Convenience constructor — wraps a non-HTTP exception (network errors).
-     *
-     * @param message Human-readable description.
-     * @param cause   Underlying throwable.
-     */
-    public MisarMailException(String message, Throwable cause) {
-        super("MisarMailException(0): " + message, cause);
-        this.status = 0;
-    }
+  public String errorType() {
+    return errorType;
+  }
 
-    /**
-     * Convenience constructor — wraps a non-HTTP exception with a status code.
-     *
-     * @param message Human-readable description.
-     * @param status  HTTP status code.
-     */
-    public MisarMailException(String message, int status) {
-        super("MisarMailException(" + status + "): " + message);
-        this.status = status;
-    }
+  /**
+   * The key was rejected outright — missing, revoked, expired, or issued for a
+   * different product.
+   */
+  public boolean isUnauthorized() {
+    return status == 401;
+  }
 
-    /** HTTP status code returned by the server, or {@code 0} for network errors. */
-    public int getStatus() {
-        return status;
-    }
+  /**
+   * The key is valid but the account's subscription does not cover this call:
+   * the feature is not in the plan, a plan limit is exhausted, or a volume
+   * ceiling was hit. Gating is decided server-side from the subscription behind
+   * the key, so this is the signal to prompt an upgrade — without parsing error
+   * strings.
+   */
+  public boolean isPlanDenied() {
+    return status == 402 || status == 403 || status == 429;
+  }
+
+  /** Worth retrying as-is: transient server or rate-limit conditions. */
+  public boolean isRetryable() {
+    return status == 429 || (status >= 500 && status < 600);
+  }
 }

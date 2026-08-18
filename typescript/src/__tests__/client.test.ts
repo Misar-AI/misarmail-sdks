@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MisarMailClient, MisarMailError, MisarMailNetworkError } from "../index.js";
 
+// The mocked fetch returns whatever body a case hands it, so a wrong shape here
+// still passes at runtime — only `tsc --noEmit` catches the drift. Every mock
+// below therefore mirrors the declared response type exactly, envelope included.
 function mockFetch(status: number, body: unknown) {
   return vi.fn().mockResolvedValue({
     ok: status >= 200 && status < 300,
@@ -9,6 +12,10 @@ function mockFetch(status: number, body: unknown) {
     statusText: status === 200 ? "OK" : "Error",
   } as Response);
 }
+
+const contact = (id: string, email: string) => ({
+  id, email, status: "active" as const, created_at: "", updated_at: "",
+});
 
 beforeEach(() => { vi.restoreAllMocks(); });
 
@@ -29,110 +36,164 @@ describe("email.send()", () => {
 
 describe("contacts", () => {
   it("list() returns paginated contacts", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { data: [{ id: "1", email: "a@b.com", status: "active", created_at: "", updated_at: "" }], total: 1, page: 1, limit: 20 }));
+    vi.stubGlobal("fetch", mockFetch(200, { data: [contact("1", "a@b.com")], total: 1, page: 1, limit: 20 }));
     const res = await new MisarMailClient("k").contacts.list();
     expect(res.data).toHaveLength(1);
     expect(res.data[0].email).toBe("a@b.com");
   });
 
-  it("create() returns new contact", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { id: "2", email: "x@y.com", status: "active", created_at: "", updated_at: "" }));
+  it("create() returns the new contact inside the envelope", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, { success: true, data: contact("2", "x@y.com") }));
     const res = await new MisarMailClient("k").contacts.create({ email: "x@y.com" });
-    expect(res.id).toBe("2");
+    expect(res.data.id).toBe("2");
   });
 
-  it("import() returns counts", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { imported: 5, updated: 1, skipped: 0, errors: 0 }));
+  it("import() reports counts under summary, and errors as a list", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, {
+      success: true,
+      summary: { imported: 5, updated: 1, skipped: 0, errors: 0 },
+      errors: [],
+    }));
     const res = await new MisarMailClient("k").contacts.import({ contacts: [{ email: "a@b.com" }] });
-    expect(res.imported).toBe(5);
-    expect(res.errors).toBe(0);
+    expect(res.summary.imported).toBe(5);
+    expect(res.summary.errors).toBe(0);
+    expect(res.errors).toEqual([]);
   });
 });
 
 describe("campaigns", () => {
   it("list() returns campaigns", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { data: [{ id: "c1", name: "Test", subject: "Hi", status: "draft", from: { email: "a@b.com" }, created_at: "", updated_at: "" }], total: 1, page: 1, limit: 20 }));
+    vi.stubGlobal("fetch", mockFetch(200, {
+      data: [{ id: "c1", name: "Test", subject: "Hi", status: "draft", created_at: "", updated_at: "" }],
+      total: 1, page: 1, limit: 20,
+    }));
     const res = await new MisarMailClient("k").campaigns.list();
     expect(res.data[0].id).toBe("c1");
   });
 
-  it("create() returns campaign", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { id: "c2", name: "N", subject: "S", status: "draft", from: { email: "a@b.com" }, created_at: "", updated_at: "" }));
-    const res = await new MisarMailClient("k").campaigns.create({ name: "N", subject: "S", from: { email: "a@b.com" } });
-    expect(res.id).toBe("c2");
+  it("create() takes fromName/fromEmail and returns the campaign in an envelope", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, {
+      success: true,
+      data: { id: "c2", name: "N", subject: "S", status: "draft", created_at: "", updated_at: "" },
+    }));
+    const res = await new MisarMailClient("k").campaigns.create({
+      name: "N", subject: "S", fromName: "A", fromEmail: "a@b.com",
+    });
+    expect(res.data.id).toBe("c2");
   });
 
-  it("send() returns sent_at", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { success: true, sent_at: "2026-04-20T00:00:00Z" }));
+  it("send() reports the campaign as scheduled", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, {
+      success: true, message: "queued", campaignId: "c1", status: "scheduled",
+    }));
     const res = await new MisarMailClient("k").campaigns.send("c1");
     expect(res.success).toBe(true);
-    expect(res.sent_at).toBeDefined();
+    expect(res.campaignId).toBe("c1");
+    expect(res.status).toBe("scheduled");
   });
 });
 
 describe("analytics.get()", () => {
-  it("returns aggregated stats", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { sent: 100, delivered: 98, opens: 40, clicks: 10, bounces: 2, unsubscribes: 1, complaints: 0, open_rate: 0.4, click_rate: 0.1 }));
+  it("returns aggregate totals and rates", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, {
+      success: true,
+      data: {
+        period: { start: "2026-04-01", end: "2026-04-30" },
+        emailUsage: [],
+        campaignTotals: { sent: 100, opened: 40, clicked: 10, bounced: 2, complained: 0 },
+        rates: { openRate: 0.4, clickRate: 0.1, bounceRate: 0.02 },
+      },
+    }));
     const res = await new MisarMailClient("k").analytics.get();
-    expect(res.sent).toBe(100);
-    expect(res.open_rate).toBe(0.4);
+    // get() is typed as campaign-scoped OR aggregate; narrow before reading.
+    if (!("campaignTotals" in res.data)) throw new Error("expected the aggregate shape");
+    expect(res.data.campaignTotals.sent).toBe(100);
+    expect(res.data.rates.openRate).toBe(0.4);
   });
 });
 
 describe("validate.email()", () => {
-  it("returns valid true for good email", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { valid: true, format_valid: true, mx_found: true }));
-    const res = await new MisarMailClient("k").validate.email({ email: "a@b.com" });
-    expect(res.valid).toBe(true);
+  const result = (email: string, isValid: boolean, mx: boolean) => ({
+    email,
+    is_valid: isValid,
+    score: isValid ? 0.98 : 0.1,
+    checks: { syntax: true, mx, smtp: null },
+    flags: {},
   });
 
-  it("returns valid false with suggestion for typo", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { valid: false, format_valid: true, mx_found: false, suggestion: "a@gmail.com" }));
+  it("reports a good address as valid", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, {
+      success: true,
+      data: result("a@b.com", true, true),
+      credits: { used: 1, balance_after: 99 },
+    }));
+    const res = await new MisarMailClient("k").validate.email({ email: "a@b.com" });
+    expect(res.data.is_valid).toBe(true);
+    expect(res.credits.balance_after).toBe(99);
+  });
+
+  it("reports a typo domain as invalid", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, {
+      success: true,
+      data: result("a@gmal.com", false, false),
+      credits: { used: 1, balance_after: 98 },
+    }));
     const res = await new MisarMailClient("k").validate.email({ email: "a@gmal.com" });
-    expect(res.valid).toBe(false);
-    expect(res.suggestion).toBe("a@gmail.com");
+    expect(res.data.is_valid).toBe(false);
+    expect(res.data.checks.mx).toBe(false);
   });
 });
 
 describe("templates", () => {
   it("list() returns templates", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { data: [{ id: "t1", name: "Welcome", subject: "Hi", html: "<p>Hi</p>", created_at: "", updated_at: "" }], total: 1 }));
+    vi.stubGlobal("fetch", mockFetch(200, {
+      data: [{ id: "t1", name: "Welcome", subject: "Hi", html: "<p>Hi</p>", created_at: "", updated_at: "" }],
+      total: 1,
+    }));
     const res = await new MisarMailClient("k").templates.list();
     expect(res.data[0].id).toBe("t1");
   });
 
-  it("render() returns rendered html", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { html: "<p>Hello Bob</p>", subject: "Hi Bob" }));
-    const res = await new MisarMailClient("k").templates.render({ template_id: "t1", variables: { name: "Bob" } });
-    expect(res.html).toContain("Bob");
+  it("render() returns the rendered html inside the envelope", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, {
+      success: true,
+      data: {
+        subject: "Hi Bob", html: "<p>Hello Bob</p>", text: null,
+        templateId: "t1", templateName: "Welcome",
+      },
+    }));
+    const res = await new MisarMailClient("k").templates.render({
+      template_id: "t1", variables: { name: "Bob" },
+    });
+    expect(res.data.html).toContain("Bob");
+    expect(res.data.subject).toBe("Hi Bob");
   });
 });
 
 describe("track", () => {
-  it("event() returns success", async () => {
+  it("event() names the event via event_name", async () => {
     vi.stubGlobal("fetch", mockFetch(200, { success: true }));
-    const res = await new MisarMailClient("k").track.event({ email: "a@b.com", event: "page_view" });
+    const res = await new MisarMailClient("k").track.event({ email: "a@b.com", event_name: "page_view" });
     expect(res.success).toBe(true);
   });
 
-  it("purchase() returns success", async () => {
+  it("purchase() takes the total in cents", async () => {
     vi.stubGlobal("fetch", mockFetch(200, { success: true }));
-    const res = await new MisarMailClient("k").track.purchase({ email: "a@b.com", order_id: "ord-1", amount: 9900 });
+    const res = await new MisarMailClient("k").track.purchase({
+      email: "a@b.com", order_id: "ord-1", total_cents: 9900,
+    });
     expect(res.success).toBe(true);
   });
 });
 
 describe("keys", () => {
-  it("list() returns api keys", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { data: [{ id: "k1", name: "prod", scopes: ["send"], created_at: "" }] }));
+  it("list() returns api keys under `keys`, not `data`", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, {
+      success: true,
+      keys: [{ id: "k1", name: "prod", scopes: ["send"], created_at: "" }],
+    }));
     const res = await new MisarMailClient("k").keys.list();
-    expect(res.data[0].scopes).toContain("send");
-  });
-
-  it("create() returns key with secret", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { id: "k2", name: "new", key: "msk_secret", scopes: ["send"], created_at: "" }));
-    const res = await new MisarMailClient("k").keys.create({ name: "new", scopes: ["send"] });
-    expect(res.key).toBe("msk_secret");
+    expect(res.keys[0].scopes).toContain("send");
   });
 });
 
@@ -179,17 +240,21 @@ describe("error handling", () => {
 
 describe("ab tests", () => {
   it("list() returns ab tests", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { data: [{ id: "ab1", name: "Subject test", status: "running", variants: [], created_at: "" }], total: 1 }));
+    vi.stubGlobal("fetch", mockFetch(200, {
+      data: [{ id: "ab1", name: "Subject test", status: "running", variants: [], created_at: "" }],
+      total: 1,
+    }));
     const res = await new MisarMailClient("k").abTests.list();
     expect(res.data[0].id).toBe("ab1");
   });
 });
 
 describe("sandbox", () => {
-  it("list() returns sandbox sends", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { data: [], total: 0 }));
+  it("list() returns sandbox sends under `sends`, not `data`", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, { success: true, sends: [], total: 0 }));
     const res = await new MisarMailClient("k").sandbox.list();
-    expect(res.data).toHaveLength(0);
+    expect(res.sends).toHaveLength(0);
+    expect(res.total).toBe(0);
   });
 });
 

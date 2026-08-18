@@ -1,9 +1,28 @@
+/// Raised for any non-2xx response, and for transport failures with status 0.
 class MisarMailError implements Exception {
+  MisarMailError(this.status, this.message, [this.errorType = 'api_error', this.details]);
+
   final int status;
   final String message;
-  MisarMailError(this.status, this.message);
+  final String errorType;
+  final Map<String, dynamic>? details;
+
+  /// The key was rejected outright — missing, revoked, expired, or issued for
+  /// a different product.
+  bool get isUnauthorized => status == 401;
+
+  /// The key is valid but the account's subscription does not cover this call:
+  /// the feature is not in the plan, a plan limit is exhausted, or a volume
+  /// ceiling was hit. Gating is decided server-side from the subscription
+  /// behind the key, so this is the signal to prompt an upgrade — without
+  /// parsing error strings.
+  bool get isPlanDenied => status == 402 || status == 403 || status == 429;
+
+  /// Worth retrying as-is: transient server or rate-limit conditions.
+  bool get isRetryable => status == 429 || (status >= 500 && status < 600);
+
   @override
-  String toString() => 'MisarMailError($status): $message';
+  String toString() => 'MisarMailError($status, $errorType): $message';
 }
 
 /// Thrown when the subscription attached to the API key blocks the call.
@@ -70,5 +89,5 @@ class MisarMailPlanLimitError extends MisarMailError {
 }
 
 class MisarMailNetworkError extends MisarMailError {
-  MisarMailNetworkError(String msg) : super(0, msg);
+  MisarMailNetworkError(String message) : super(0, message, 'network_error');
 }

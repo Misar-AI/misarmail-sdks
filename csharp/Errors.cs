@@ -1,37 +1,40 @@
-namespace MisarMail;
+using System;
+
+namespace Misar.Mail;
 
 /// <summary>
-/// Thrown when the MisarMail API returns a non-2xx HTTP response.
+/// Thrown for any non-2xx response, and for transport failures with status 0.
 /// </summary>
-public class MisarMailException : Exception
+public sealed class MisarMailException : Exception
 {
-    /// <summary>HTTP status code returned by the server.</summary>
+    public MisarMailException(int status, string message, string errorType = "api_error")
+        : base($"misar-mail: API error {status} ({errorType}): {message}")
+    {
+        Status = status;
+        ErrorType = errorType;
+    }
+
     public int Status { get; }
 
-    public MisarMailException(int status, string message)
-        : base($"MisarMailException({status}): {message}")
-    {
-        Status = status;
-    }
+    public string ErrorType { get; }
 
-    public MisarMailException(int status, string message, Exception inner)
-        : base($"MisarMailException({status}): {message}", inner)
-    {
-        Status = status;
-    }
-}
+    /// <summary>
+    /// The key was rejected outright — missing, revoked, expired, or issued for
+    /// a different product.
+    /// </summary>
+    public bool IsUnauthorized => Status == 401;
 
-/// <summary>
-/// Thrown when a network-level error prevents the request from completing,
-/// or when the maximum number of retries is exhausted.
-/// </summary>
-public sealed class MisarMailNetworkException : MisarMailException
-{
-    public MisarMailNetworkException(string message)
-        : base(0, message) { }
+    /// <summary>
+    /// The key is valid but the account's subscription does not cover this
+    /// call: the feature is not in the plan, a plan limit is exhausted, or a
+    /// volume ceiling was hit. Gating is decided server-side from the
+    /// subscription behind the key, so this is the signal to prompt an upgrade
+    /// — without parsing error strings.
+    /// </summary>
+    public bool IsPlanDenied => Status is 402 or 403 or 429;
 
-    public MisarMailNetworkException(string message, Exception inner)
-        : base(0, message, inner) { }
+    /// <summary>Worth retrying as-is: transient server or rate-limit conditions.</summary>
+    public bool IsRetryable => Status == 429 || (Status >= 500 && Status < 600);
 }
 
 /// <summary>

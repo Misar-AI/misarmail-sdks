@@ -8,6 +8,27 @@ export class MisarMailError extends Error {
     super(message);
     this.name = "MisarMailError";
   }
+
+  /** The key was rejected outright — missing, revoked, expired, or wrong product. */
+  get isUnauthorized(): boolean {
+    return this.status === 401;
+  }
+
+  /**
+   * The key is valid but the account's subscription does not cover this call:
+   * the feature is not in the plan, a plan limit is exhausted, or a volume
+   * ceiling was hit. Gating is decided server-side from the subscription behind
+   * the key, so this is the signal to prompt an upgrade — distinguishing it
+   * from a generic failure without parsing error strings.
+   */
+  get isPlanDenied(): boolean {
+    return this.status === 402 || this.status === 403 || this.status === 429;
+  }
+
+  /** Worth retrying as-is: transient server or rate-limit conditions. */
+  get isRetryable(): boolean {
+    return this.status === 429 || (this.status >= 500 && this.status < 600);
+  }
 }
 
 export class MisarMailNetworkError extends MisarMailError {
