@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = "misarmail"
-  spec.version       = "1.0.0"
+  spec.version       = "5.0.0"
   spec.authors       = ["Misar AI"]
   spec.email         = ["hello@misar.io"]
   spec.summary       = "Ruby client for MisarMail: transactional send, campaigns, contacts, templates, automations, deliverability and analytics in one API"
@@ -11,15 +11,16 @@ Gem::Specification.new do |spec|
                        "33 resource groups on one client, plus retries with backoff, typed " \
                        "plan-limit errors, SSE streaming, and constant-time webhook " \
                        "signature verification. No runtime dependencies beyond the stdlib."
-  spec.homepage      = "https://misarmail.com/docs/sdks/ruby"
+  spec.homepage      = "https://www.misarmail.com"
   spec.license       = "MIT"
   spec.required_ruby_version = ">= 2.7"
 
   spec.metadata = {
-    "homepage_uri"    => spec.homepage,
-    "source_code_uri" => "https://github.com/Misar-AI/misarmail-sdks",
-    "changelog_uri"   => "https://github.com/Misar-AI/misarmail-sdks/blob/main/ruby/CHANGELOG.md",
-    "bug_tracker_uri" => "https://github.com/Misar-AI/misarmail-sdks/issues"
+    "homepage_uri"      => spec.homepage,
+    "documentation_uri" => "https://docs.misar.io/mail",
+    "source_code_uri"   => "https://github.com/Misar-AI/misarmail-sdks/tree/main/ruby",
+    "changelog_uri"     => "https://github.com/Misar-AI/misarmail-sdks/blob/main/ruby/CHANGELOG.md",
+    "bug_tracker_uri"   => "https://github.com/Misar-AI/misarmail-sdks/issues"
   }
 
   spec.files = Dir["lib/**/*.rb", "README.md", "LICENSE", "CHANGELOG.md"]

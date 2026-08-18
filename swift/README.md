@@ -1,82 +1,26 @@
 # MisarMail Swift SDK
 
-[MisarMail](https://misarmail.com) is a transactional **and** marketing email platform:
-one API for the receipts and password resets your product sends, and for the campaigns,
-segments and automations your marketing team runs on the same contact list and the same
-verified domains. This package is the Swift client for that API — 33 resource groups
-behind `async`/`await`, on Apple platforms (macOS 12+, iOS 15+, tvOS 15+, watchOS 8+) and
-on Linux, with no dependencies beyond Foundation.
+> Send transactional email and run marketing campaigns from Swift — async/await on Apple platforms and Linux.
 
-Full reference: [`misarmail.com/docs`](https://misarmail.com/docs).
+[![Swift](https://img.shields.io/badge/swift-5.9%2B-F05138)](https://swift.org)
+[![SwiftPM](https://img.shields.io/badge/SwiftPM-compatible-brightgreen)](https://github.com/Misar-AI/misarmail-swift)
+[![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20iOS%20%7C%20tvOS%20%7C%20watchOS%20%7C%20Linux-lightgrey)](https://github.com/Misar-AI/misarmail-swift)
+[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-## Features
+**33 resource groups · 90 methods · SSE streaming · no dependencies beyond Foundation**
 
-Grouped the way the client exposes them. Every name below is a property on
-`MisarMailClient`.
+MisarMail is one API for both halves of your email: the receipts and password resets your product sends, and the campaigns, segments and automations your marketing team runs on the same contact list and the same verified domains.
 
-- **Transactional send** — `email.send`; `sandbox` (`send`, `list`, `delete`) for test
-  sends that never leave the building.
-- **Campaigns** — `campaigns` `list`/`create`/`get`/`update`/`sendCampaign`/`delete`;
-  `abTests` `list`/`create`/`get`/`setWinner`.
-- **Audience** — `contacts` (`list`, `create`, `get`, `update`, `delete`,
-  `importContacts`) and `segments.members`.
-- **Content** — `templates` (`list`, `create`, `get`, `update`, `delete`, `render`),
-  `landingPages.create`, and `ai.subjectLines` for generated subject lines.
-- **Automations** — `automations` `list`/`create`/`get`/`update`/`delete`/`activate`.
-- **Deliverability and sending infrastructure** — `domains` (add, `verify`, delete),
-  `dmarc` (`check`, `listDomains`, `addDomain`, `removeDomain`), `deliverability`
-  (`audit`, `score`), `dedicatedIPs`, `warmup.get`, `inbound` addresses.
-- **Mailbox** — `emails` (`list`, `get`, `update`), `emailAccounts.list`.
-- **Analytics and attribution** — `analytics.overview` (aggregate, or per-campaign when
-  you pass `campaignId`), `track.event`, `track.purchase`, `revenue.attribution`,
-  `usage.get`.
-- **Validation** — `validate.email` for one address at a time.
-- **Plan, billing and credits** — `plan` (`get`, `monetization`), `billing`
-  (`subscription`, `checkout`), `subscription` (`get`, `upsert`, `cancel`), `wallet`
-  (`get`, `credit`, `debit`), `creditRates.list`, `teamMembers.get`, `monetization.tip`.
-- **Developer** — `keys` (`list`, `create`, `get`, `revoke`), `webhooks` (CRUD plus
-  `test`), `streaming`.
+macOS 12+, iOS 15+, tvOS 15+, watchOS 8+ and Linux. Because `URLSession.data(for:)` and `.bytes(for:)` do not exist in swift-corelibs-foundation, the package bridges the delegate API instead — one implementation, every platform.
 
-Narrower than the TypeScript SDK, which is the reference implementation: forms, labels,
-drafts, marketplace, inbox conversations, preferences, referrals, notifications,
-integrations and workspace settings have no Swift methods yet, `segments.members` is the
-only segments call, and there is no batch address validation.
-
-## What's in the package
-
-- **`MisarMailClient`** — the one type you construct. Every resource is a computed
-  property on it (`mail.contacts`, `mail.campaigns`, …); the resource classes themselves
-  are not constructed directly.
-- **Options** — `MisarMailClient(apiKey:baseURL:maxRetries:session:)`. Defaults:
-  `baseURL` `https://api.misar.io/mail/v1`, `maxRetries` `3`, `URLSession.shared`. Pass
-  your own `URLSession` to control timeouts, proxies or `protocolClasses` in tests — SSE
-  reuses that session's configuration too. The few routes outside `/v1` (domains,
-  billing) are derived from `baseURL` for you.
-- **Payloads and results** — requests take `[String: Any]` and every method returns
-  `[String: Any]`. There are no `Codable` models, so nothing breaks when the API adds a
-  field; decode into your own `Codable` types where you want them. List filters are
-  passed as a raw query string (`params: "page=1&limit=50"`), not a dictionary.
-- **Transport** — `URLRequest` with a 30-second timeout. `429`, `500`, `502`, `503` and
-  `504` are retried with exponential backoff (500 ms, then 1 s), as are transport
-  failures. A plan refusal is never retried.
-- **Errors** — one `MisarMailError` enum: `.apiError`, `.planLimitExceeded`,
-  `.networkError`.
-- **SSE streaming** — `mail.streaming.generateEmail()` and `campaignSend()` return
-  `AsyncThrowingStream<MisarMailStreamEvent, Error>`; see [Streaming](#streaming).
-- **Linux** — `URLSession.data(for:)` and `URLSession.bytes(for:)` do not exist in
-  swift-corelibs-foundation, so the package bridges the delegate API instead. One
-  implementation, every platform.
-- **No webhook signature verifier.** `mail.webhooks` manages webhook *endpoints*
-  (list/create/get/update/delete/test). MisarMail signs deliveries as
-  `HMAC-SHA256(timestamp + "." + rawBody)` in the `X-Misar-Signature` header alongside
-  `X-Misar-Timestamp`, but this package ships no helper to check it — verify it yourself
-  with CryptoKit's `HMAC<SHA256>` and a constant-time compare. (The Go, Python, Ruby,
-  Dart and Flutter SDKs do ship one.)
+---
 
 ## Install
 
+### Package.swift
+
 ```swift
-.package(url: "https://github.com/Misar-AI/misarmail-swift.git", from: "1.0.0")
+.package(url: "https://github.com/Misar-AI/misarmail-swift.git", from: "5.0.0")
 ```
 
 and add the product to your target:
@@ -85,17 +29,140 @@ and add the product to your target:
 .product(name: "MisarMail", package: "misarmail-swift")
 ```
 
+### Xcode
+
+File → Add Package Dependencies → `https://github.com/Misar-AI/misarmail-swift.git`
+
 > SwiftPM requires `Package.swift` at the repository root, so this SDK is mirrored to its
 > own repository. The monorepo URL will not resolve.
 
-## Auth
+---
 
-Use a MisarMail developer key (`msk_…`), created at
-[misarmail.com/developers](https://misarmail.com/developers). It is sent as
-`Authorization: Bearer msk_…`.
+## Authentication
+
+Create a developer key at https://mail.misar.io/developers. It starts with `msk_` and is
+sent as `Authorization: Bearer msk_…`.
 
 Every call is metered against the subscription attached to that key. There is no
-client-side limit checking — the server decides, and the SDK surfaces its answer.
+client-side limit checking — the server decides, and the SDK surfaces its answer. A plan
+refusal answers **403** with `code: "plan_limit_exceeded"` and is never retried.
+
+```swift
+import MisarMail
+
+let mail = MisarMailClient(apiKey: ProcessInfo.processInfo.environment["MISARMAIL_API_KEY"]!)
+```
+
+---
+
+## Resources
+
+Every group the client exposes, and every public method on it.
+
+### Send
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.email` | `send` | Transactional send — cc/bcc/reply-to, tags, metadata, `idempotency_key`. |
+| `mail.sandbox` | `send`, `list`, `delete` | Test sends captured instead of delivered. |
+
+### Campaigns and tests
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.campaigns` | `list`, `create`, `get`, `update`, `sendCampaign`, `delete` | Marketing campaigns: draft, edit, queue for send. |
+| `mail.abTests` | `list`, `create`, `get`, `setWinner` | Subject, content, send-time, from-name and preheader splits, and winner selection. |
+
+### Audience
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.contacts` | `list`, `create`, `get`, `update`, `delete`, `importContacts` | Subscribers, plus bulk import. |
+| `mail.segments` | `members` | Dynamic audience segments and their membership. |
+| `mail.landingPages` | `create` | Hosted landing pages with an email capture form. |
+
+### Content
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.templates` | `list`, `create`, `get`, `update`, `delete`, `render` | Reusable templates and server-side variable rendering. |
+| `mail.ai` | `subjectLines` | AI-generated subject lines. |
+
+### Automations
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.automations` | `list`, `create`, `get`, `update`, `delete`, `activate` | Trigger-based workflows — welcome series, drips, re-engagement. |
+
+### Deliverability and sending infrastructure
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.domains` | `list`, `create`, `get`, `verify`, `delete` | Sending domains and their DNS verification. |
+| `mail.dmarc` | `check`, `listDomains`, `addDomain`, `removeDomain` | Live SPF/DKIM/DMARC record checks and monitored domains. |
+| `mail.deliverability` | `audit`, `score` | Deliverability score, audit and remediation guidance. |
+| `mail.dedicatedIPs` | `list`, `create`, `update`, `delete` | Dedicated sending IPs. |
+| `mail.warmup` | `get` | IP/domain warm-up progress and today's remaining capacity. |
+| `mail.inbound` | `list`, `create`, `get`, `delete` | Inbound routing domains, so replies land in the unified inbox. |
+
+### Mailbox and inbox
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.emails` | `list`, `get`, `update` | Stored messages in the mailbox. |
+| `mail.emailAccounts` | `list` | Connected mailbox accounts. |
+
+### Analytics and attribution
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.analytics` | `overview` | Delivery and engagement stats — aggregate, or one campaign. |
+| `mail.track` | `event`, `purchase` | Custom events and ecommerce purchases. |
+| `mail.revenue` | `attribution` | Revenue attributed back to email. |
+| `mail.usage` | `get` | Metered usage for a period. |
+
+### Validation
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.validate` | `email` | Address validation, and the credit balance behind it. |
+
+### Plan, billing and credits
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.plan` | `get`, `monetization` | Current plan, quotas and monetization stats. |
+| `mail.billing` | `subscription`, `checkout` | Subscription state and checkout. |
+| `mail.subscription` | `get`, `upsert`, `cancel` | Subscription read/write and per-product plan limits. |
+| `mail.wallet` | `get`, `credit`, `debit` | Credit balance, credit and debit. |
+| `mail.creditRates` | `list` | What each metered action costs in credits. |
+| `mail.teamMembers` | `get` | Team members on the account. |
+| `mail.monetization` | `tip` | Newsletter tips. |
+
+### Developer
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.keys` | `list`, `create`, `get`, `revoke` | API keys — create, list, revoke. |
+| `mail.webhooks` | `list`, `create`, `get`, `update`, `delete`, `test` | Webhook endpoints, plus a test delivery. |
+| `mail.streaming` | `generateEmail`, `campaignSend` | The two Server-Sent Events endpoints. |
+
+---
+
+## Client
+
+| Thing | Detail |
+| --- | --- |
+| Entry point | `MisarMailClient(apiKey:baseURL:maxRetries:session:)` — every resource is a computed property. |
+| Defaults | `https://api.misar.io/mail/v1`, `maxRetries` 3, `URLSession.shared`. |
+| Payloads | `[String: Any]` in and out. List filters go in as a raw query string (`params: "page=1&limit=50"`). |
+| Transport | `URLRequest`, 30-second timeout; SSE reuses the same session configuration. |
+| Retried | `429`, `500`, `502`, `503`, `504` and transport failures, 500 ms then 1 s. |
+| Never retried | Plan refusals, and streams. |
+| Errors | One `MisarMailError` enum: `.apiError`, `.planLimitExceeded`, `.networkError`. |
+| Webhook verifier | Not shipped here — verify `HMAC-SHA256(timestamp + "." + rawBody)` yourself with CryptoKit's `HMAC<SHA256>` and a constant-time compare. (Go, Python, Ruby and Dart ship one.) |
+
+---
 
 ## Quick start
 
@@ -354,6 +421,15 @@ for try await frame in mail.streaming.campaignSend(campaignID) {
 }
 ```
 
-## License
+---
 
-MIT — see [LICENSE](LICENSE).
+## Links
+
+- Website — https://www.misarmail.com
+- App — https://mail.misar.io
+- Parent — https://misar.io
+- Documentation — https://docs.misar.io/mail
+- Source — https://github.com/Misar-AI/misarmail-sdks
+- Swift Package — https://github.com/Misar-AI/misarmail-swift
+
+MIT © [Misar AI](https://misar.io)

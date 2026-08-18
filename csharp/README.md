@@ -1,95 +1,168 @@
-# MisarMail C# SDK
+# MisarMail .NET SDK
 
-[MisarMail](https://misarmail.com) is a transactional **and** marketing email platform:
-one API for the receipts and password resets your product sends, and for the campaigns,
-segments and automations your marketing team runs on the same contact list and the same
-verified domains. This package is the .NET client for that API — an async/await client
-covering 33 resource groups, targeting `net8.0` with no dependencies beyond the base
-class library.
+> Send transactional email and run marketing campaigns from C# — async/await, cancellation, no dependencies.
 
-Full reference: [`misarmail.com/docs`](https://misarmail.com/docs).
+[![NuGet](https://img.shields.io/nuget/v/MisarMail)](https://www.nuget.org/packages/MisarMail)
+[![net](https://img.shields.io/badge/.NET-8.0-512BD4)](https://www.nuget.org/packages/MisarMail)
+[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-## Features
+**33 resource groups · 91 methods · SSE streaming · no dependencies beyond the BCL**
 
-Grouped the way the client exposes them. Every name below is the prefix of a real method
-on `MisarMailClient` — the surface is flat (`Group_MethodAsync`), not nested resources.
+MisarMail is one API for both halves of your email: the receipts and password resets your product sends, and the campaigns, segments and automations your marketing team runs on the same contact list and the same verified domains.
 
-- **Transactional send** — `Email_SendAsync`; `Sandbox_SendAsync`/`ListAsync`/`DeleteAsync`
-  for test sends that never leave the building.
-- **Campaigns** — `Campaigns_ListAsync`/`CreateAsync`/`GetAsync`/`UpdateAsync`/
-  `SendCampaignAsync`/`DeleteAsync`; `AbTests_ListAsync`/`CreateAsync`/`GetAsync`/
-  `SetWinnerAsync`.
-- **Audience** — `Contacts_ListAsync`/`CreateAsync`/`GetAsync`/`UpdateAsync`/`DeleteAsync`/
-  `ImportContactsAsync` and `Segments_MembersAsync`.
-- **Content** — `Templates_ListAsync`/`CreateAsync`/`GetAsync`/`UpdateAsync`/`DeleteAsync`/
-  `RenderAsync`, `LandingPages_CreateAsync`, and `Ai_SubjectLinesAsync` for generated
-  subject lines.
-- **Automations** — `Automations_ListAsync`/`CreateAsync`/`GetAsync`/`UpdateAsync`/
-  `DeleteAsync`/`ActivateAsync`.
-- **Deliverability and sending infrastructure** — `Domains_*` (add, `VerifyAsync`,
-  delete), `Dmarc_CheckAsync`/`ListDomainsAsync`/`AddDomainAsync`/`RemoveDomainAsync`,
-  `Deliverability_AuditAsync`/`ScoreAsync`, `DedicatedIPs_*`, `Warmup_GetAsync`,
-  `Inbound_*`.
-- **Mailbox** — `Emails_ListAsync`/`GetAsync`/`UpdateAsync`, `EmailAccounts_ListAsync`.
-- **Analytics and attribution** — `Analytics_OverviewAsync` (aggregate, or per-campaign
-  when you pass `campaignId`), `Track_EventAsync`, `Track_PurchaseAsync`,
-  `Revenue_AttributionAsync`, `Usage_GetAsync`.
-- **Validation** — `Validate_EmailAsync` for one address at a time.
-- **Plan, billing and credits** — `Plan_GetAsync`, `Plan_LimitsAsync`,
-  `Plan_MonetizationAsync`, `Billing_SubscriptionAsync`/`CheckoutAsync`,
-  `Subscription_GetAsync`/`UpsertAsync`/`CancelAsync`, `Wallet_GetAsync`/`CreditAsync`/
-  `DebitAsync`, `CreditRates_ListAsync`, `TeamMembers_GetAsync`, `Monetization_TipAsync`.
-- **Developer** — `Keys_ListAsync`/`CreateAsync`/`GetAsync`/`RevokeAsync`, `Webhooks_*`
-  (CRUD plus `TestAsync`), `Streaming_*`.
+Targets `net8.0`. The surface is flat — `Group_MethodAsync`, not nested resource objects — and every method takes an optional `CancellationToken` and returns `Task<JsonElement>`.
 
-Narrower than the TypeScript SDK, which is the reference implementation: forms, labels,
-drafts, marketplace, inbox conversations, preferences, referrals, notifications,
-integrations and workspace settings have no C# methods yet, `Segments_MembersAsync` is
-the only segments call, and there is no batch address validation. Call those routes over
-HTTP directly if you need them.
-
-## What's in the package
-
-- **`MisarMailClient`** — the one type you construct. Every call is a method on it; it
-  implements `IDisposable` and owns its `HttpClient` unless you pass your own.
-- **Options** — `new MisarMailClient(apiKey, baseUrl, maxRetries, httpClient)`. Defaults:
-  `baseUrl` `https://api.misar.io/mail/v1`, `maxRetries` `3`, a fresh `HttpClient` with a
-  30-second timeout. A blank `apiKey` throws `ArgumentException` immediately. The handful
-  of routes that live outside `/v1` (domains, billing) are derived from `baseUrl` for you.
-- **Payloads and results** — requests take any `object` and are serialized with
-  `System.Text.Json`, so anonymous objects work as-is. Every method returns
-  `Task<JsonElement>`; there are no generated DTOs, so read fields with `GetProperty` or
-  deserialize into your own records.
-- **Cancellation** — every method takes an optional `CancellationToken`.
-- **Transport** — `429`, `500`, `502`, `503` and `504` are retried with exponential
-  backoff (500 ms, then 1 s), as are `HttpRequestException` and `TaskCanceledException`.
-  A plan refusal is never retried.
-- **Errors** — `MisarMailException`, `MisarMailNetworkException`,
-  `MisarMailPlanLimitException`.
-- **SSE streaming** — `Streaming_GenerateEmailAsync` and `Streaming_CampaignSendAsync`
-  return `IAsyncEnumerable<MisarMailStreamEvent>`; see [Streaming](#streaming).
-- **No webhook signature verifier.** `Webhooks_*` manages webhook *endpoints*
-  (list/create/get/update/delete/test). MisarMail signs deliveries as
-  `HMAC-SHA256(timestamp + "." + rawBody)` in the `X-Misar-Signature` header alongside
-  `X-Misar-Timestamp`, but this package ships no helper to check it — verify it yourself
-  with `System.Security.Cryptography.HMACSHA256` and
-  `CryptographicOperations.FixedTimeEquals`. (The Go, Python, Ruby, Dart and Flutter SDKs
-  do ship one.)
+---
 
 ## Install
 
+### dotnet CLI
+
 ```bash
-dotnet add package MisarMail --version 1.0.0
+dotnet add package MisarMail --version 5.0.0
 ```
 
-## Auth
+### PackageReference
 
-Use a MisarMail developer key (`msk_…`), created at
-[misarmail.com/developers](https://misarmail.com/developers). It is sent as
-`Authorization: Bearer msk_…`.
+```xml
+<PackageReference Include="MisarMail" Version="5.0.0" />
+```
+
+### Package Manager
+
+```powershell
+Install-Package MisarMail -Version 5.0.0
+```
+
+---
+
+## Authentication
+
+Create a developer key at https://mail.misar.io/developers. It starts with `msk_` and is
+sent as `Authorization: Bearer msk_…`.
 
 Every call is metered against the subscription attached to that key. There is no
-client-side limit checking — the server decides, and the SDK surfaces its answer.
+client-side limit checking — the server decides, and the SDK surfaces its answer. A plan
+refusal answers **403** with `code: "plan_limit_exceeded"` and is never retried.
+
+```csharp
+using MisarMail;
+
+using var mail = new MisarMailClient(Environment.GetEnvironmentVariable("MISARMAIL_API_KEY")!);
+```
+
+---
+
+## Resources
+
+The surface is flat: you call `mail.Group_MethodAsync(…)`. The **Methods** column lists the middle segment — `Email` + `Send` is `mail.Email_SendAsync`.
+
+### Send
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Email_…Async` | `Send` | Transactional send — cc/bcc/reply-to, tags, metadata, `idempotency_key`. |
+| `Sandbox_…Async` | `Send`, `List`, `Delete` | Test sends captured instead of delivered. |
+
+### Campaigns and tests
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Campaigns_…Async` | `List`, `Create`, `Get`, `Update`, `SendCampaign`, `Delete` | Marketing campaigns: draft, edit, queue for send. |
+| `AbTests_…Async` | `List`, `Create`, `Get`, `SetWinner` | Subject, content, send-time, from-name and preheader splits, and winner selection. |
+
+### Audience
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Contacts_…Async` | `List`, `Create`, `Get`, `Update`, `Delete`, `ImportContacts` | Subscribers, plus bulk import. |
+| `Segments_…Async` | `Members` | Dynamic audience segments and their membership. |
+| `LandingPages_…Async` | `Create` | Hosted landing pages with an email capture form. |
+
+### Content
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Templates_…Async` | `List`, `Create`, `Get`, `Update`, `Delete`, `Render` | Reusable templates and server-side variable rendering. |
+| `Ai_…Async` | `SubjectLines` | AI-generated subject lines. |
+
+### Automations
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Automations_…Async` | `List`, `Create`, `Get`, `Update`, `Delete`, `Activate` | Trigger-based workflows — welcome series, drips, re-engagement. |
+
+### Deliverability and sending infrastructure
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Domains_…Async` | `List`, `Create`, `Get`, `Verify`, `Delete` | Sending domains and their DNS verification. |
+| `Dmarc_…Async` | `Check`, `ListDomains`, `AddDomain`, `RemoveDomain` | Live SPF/DKIM/DMARC record checks and monitored domains. |
+| `Deliverability_…Async` | `Audit`, `Score` | Deliverability score, audit and remediation guidance. |
+| `DedicatedIPs_…Async` | `List`, `Create`, `Update`, `Delete` | Dedicated sending IPs. |
+| `Warmup_…Async` | `Get` | IP/domain warm-up progress and today's remaining capacity. |
+| `Inbound_…Async` | `List`, `Create`, `Get`, `Delete` | Inbound routing domains, so replies land in the unified inbox. |
+
+### Mailbox and inbox
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Emails_…Async` | `List`, `Get`, `Update` | Stored messages in the mailbox. |
+| `EmailAccounts_…Async` | `List` | Connected mailbox accounts. |
+
+### Analytics and attribution
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Analytics_…Async` | `Overview` | Delivery and engagement stats — aggregate, or one campaign. |
+| `Track_…Async` | `Event`, `Purchase` | Custom events and ecommerce purchases. |
+| `Revenue_…Async` | `Attribution` | Revenue attributed back to email. |
+| `Usage_…Async` | `Get` | Metered usage for a period. |
+
+### Validation
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Validate_…Async` | `Email` | Address validation, and the credit balance behind it. |
+
+### Plan, billing and credits
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Plan_…Async` | `Get`, `Monetization`, `Limits` | Current plan, quotas and monetization stats. |
+| `Billing_…Async` | `Subscription`, `Checkout` | Subscription state and checkout. |
+| `Subscription_…Async` | `Get`, `Upsert`, `Cancel` | Subscription read/write and per-product plan limits. |
+| `Wallet_…Async` | `Get`, `Credit`, `Debit` | Credit balance, credit and debit. |
+| `CreditRates_…Async` | `List` | What each metered action costs in credits. |
+| `TeamMembers_…Async` | `Get` | Team members on the account. |
+| `Monetization_…Async` | `Tip` | Newsletter tips. |
+
+### Developer
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `Keys_…Async` | `List`, `Create`, `Get`, `Revoke` | API keys — create, list, revoke. |
+| `Webhooks_…Async` | `List`, `Create`, `Get`, `Update`, `Delete`, `Test` | Webhook endpoints, plus a test delivery. |
+| `Streaming_…Async` | `GenerateEmail`, `CampaignSend` | The two Server-Sent Events endpoints. |
+
+---
+
+## Client
+
+| Thing | Detail |
+| --- | --- |
+| Entry point | `new MisarMailClient(apiKey, baseUrl, maxRetries, httpClient)`. Implements `IDisposable` and owns its `HttpClient` unless you pass one. |
+| Defaults | `https://api.misar.io/mail/v1`, `maxRetries` 3, a fresh `HttpClient` with a 30-second timeout. |
+| Validation | A blank `apiKey` throws `ArgumentException` immediately. |
+| Payloads | Any `object`, serialized with `System.Text.Json` — anonymous objects work as-is. |
+| Results | `Task<JsonElement>`; read with `GetProperty` or deserialize into your own records. |
+| Cancellation | Every method takes an optional `CancellationToken`. |
+| Retried | `429`, `500`, `502`, `503`, `504`, `HttpRequestException` and `TaskCanceledException` — 500 ms then 1 s. |
+| Never retried | Plan refusals, and streams. |
+| Errors | `MisarMailException`, `MisarMailNetworkException`, `MisarMailPlanLimitException`. |
+| Webhook verifier | Not shipped here — verify `HMAC-SHA256(timestamp + "." + rawBody)` yourself with `HMACSHA256` and `CryptographicOperations.FixedTimeEquals`. (Go, Python, Ruby and Dart ship one.) |
+
+---
 
 ## Quick start
 
@@ -343,6 +416,15 @@ await foreach (var frame in mail.Streaming_CampaignSendAsync(id))
     Console.WriteLine(frame.Raw);
 ```
 
-## License
+---
 
-MIT — see [LICENSE](LICENSE).
+## Links
+
+- Website — https://www.misarmail.com
+- App — https://mail.misar.io
+- Parent — https://misar.io
+- Documentation — https://docs.misar.io/mail
+- Source — https://github.com/Misar-AI/misarmail-sdks
+- NuGet — https://www.nuget.org/packages/MisarMail
+
+MIT © [Misar AI](https://misar.io)

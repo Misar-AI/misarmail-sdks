@@ -1,86 +1,183 @@
 # MisarMail TypeScript SDK
 
-[MisarMail](https://misarmail.com) is a transactional **and** marketing email platform:
-one API for the receipts and password resets your product sends, and for the campaigns,
-segments and automations your marketing team runs on the same contact list and the same
-verified domains. This package is the TypeScript/JavaScript client for that API — a
-typed client covering all 43 resource groups, for anything that can run modern
-JavaScript with a global `fetch` (Node 18+, Deno, Bun, Cloudflare Workers and other edge
-runtimes).
+> Send transactional email, run campaigns, and manage the whole list — typed, from Node, Deno, Bun or the edge.
 
-Full reference: [`misarmail.com/docs`](https://misarmail.com/docs).
+[![npm](https://img.shields.io/npm/v/@misarmail/sdk)](https://www.npmjs.com/package/@misarmail/sdk)
+[![types](https://img.shields.io/badge/types-included-blue)](https://www.npmjs.com/package/@misarmail/sdk)
+[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-## Features
+**43 resource groups · 179 methods · SSE streaming · zero runtime dependencies**
 
-Grouped the way the client exposes them. Every name below is a property on
-`MisarMailClient`.
+MisarMail is one API for both halves of your email: the receipts and password resets your product sends, and the campaigns, segments and automations your marketing team runs on the same contact list and the same verified domains.
 
-- **Transactional send** — `email.send` with cc/bcc/reply-to, tags, metadata and an
-  `idempotency_key`; `sandbox` to list or clear test sends that never leave the building.
-- **Campaigns** — `campaigns` list/create/get/update/delete/send; `abTests` for
-  subject, content, send-time, from-name and preheader splits, with
-  `selectWinner`/`setWinner` by opens, clicks, revenue or conversions.
-- **Audience** — `contacts` (list, create, delete, bulk `import`), `segments`
-  (create, update, `preview`, `refresh`, `members`), `forms`, `landingPages`, and
-  `preferences` for the token-authenticated subscriber preference centre.
-- **Content** — `templates` (list, create, `render` with variable substitution),
-  `marketplace` (browse, purchase, download, review and publish template listings),
-  `drafts`, `labels`, and `ai.subjectLines` for generated subject lines.
-- **Automations** — `automations` list/create/get/update/delete/`activate`.
-- **Deliverability and sending infrastructure** — `domains` (add, verify DNS, delete),
-  `dmarc` (monitored domains and DNS checks), `deliverability`
-  (`audit`, `score`, `history`, `playbooks`, `sendTime`), `dedicatedIps`, `warmup`,
-  `inbound` domains, and `settings` for signatures, SMTP pools, IP pools, the
-  unsubscribe page, whitelabel config and audit logs.
-- **Inbox** — `inbox` conversations (list, get, send, snooze, unsubscribe, categorize,
-  plus AI `improve`/`reply`/`summarize`), `emails` for stored messages, `emailAccounts`.
-- **Analytics and attribution** — `analytics.get` (aggregate, or per-campaign when you
-  pass `campaignId`), `track.event`, `track.purchase`, `revenue.attribution`, `usage`.
-- **Validation** — `validate.email`, `validate.batch` (max 500 addresses),
-  `validate.balance`.
-- **Plan, billing and credits** — `plan.get`, `billing`, `wallet`, `subscription`,
-  `creditRates`, `teamMembers`, `monetization.recordTip`, `referrals`.
-- **Developer** — `keys`, `webhooks` (CRUD plus `test`), `notifications`,
-  `integrations`, `streaming`.
+Works anywhere with a global `fetch` — Node 18+, Deno, Bun, Cloudflare Workers and other edge runtimes. Dual ESM + CJS build with bundled `.d.ts`; every request and response interface is exported.
 
-## What's in the package
-
-- **`MisarMailClient`** — the one entry point. Every resource hangs off it as a readonly
-  property (`mail.contacts`, `mail.campaigns`, …); there is nothing else to construct.
-- **Options** — `new MisarMailClient(apiKey, { baseURL, maxRetries, timeoutMs })`.
-  Defaults: `baseURL` `https://api.misar.io/mail/v1`, `maxRetries` `3`, `timeoutMs`
-  `30_000`.
-- **Transport** — `fetch` with an `AbortController` timeout. `429`, `500`, `502`, `503`
-  and `504` are retried with exponential backoff (200 ms, 400 ms, 800 ms …), as are
-  network failures. A plan refusal is never retried.
-- **Errors** — `MisarMailError`, `MisarMailNetworkError`, `MisarMailPlanLimitError`, all
-  exported from the package root.
-- **SSE streaming** — `mail.streaming.generateEmail()` and
-  `mail.streaming.campaignSend()` are async generators; see [Streaming](#streaming).
-- **Types** — every request and response interface is exported, so `import type
-  { Campaign, Contact, EmailVerificationResult } from "@misarmail/sdk"` works.
-- **Packaging** — dual ESM + CJS build with bundled `.d.ts`. No runtime dependencies.
-- **No webhook signature verifier.** `mail.webhooks` manages webhook *endpoints*
-  (list/create/get/update/delete/test). MisarMail signs deliveries as
-  `HMAC-SHA256(timestamp + "." + rawBody)` in the `X-Misar-Signature` header alongside
-  `X-Misar-Timestamp`, but this SDK does not ship a helper to check it — verify it
-  yourself with `node:crypto` and a constant-time compare. (The Go, Python, Ruby, Dart
-  and Flutter SDKs do ship one.)
+---
 
 ## Install
+
+### npm
 
 ```bash
 npm install @misarmail/sdk
 ```
 
-## Auth
+### pnpm
 
-Use a MisarMail developer key (`msk_…`), created at
-[misarmail.com/developers](https://misarmail.com/developers). It is sent as
-`Authorization: Bearer msk_…`.
+```bash
+pnpm add @misarmail/sdk
+```
+
+### yarn
+
+```bash
+yarn add @misarmail/sdk
+```
+
+### bun
+
+```bash
+bun add @misarmail/sdk
+```
+
+---
+
+## Authentication
+
+Create a developer key at https://mail.misar.io/developers. It starts with `msk_` and is
+sent as `Authorization: Bearer msk_…`.
 
 Every call is metered against the subscription attached to that key. There is no
-client-side limit checking — the server decides, and the SDK surfaces its answer.
+client-side limit checking — the server decides, and the SDK surfaces its answer. A plan
+refusal answers **403** with `code: "plan_limit_exceeded"` and is never retried.
+
+```ts
+import { MisarMailClient } from "@misarmail/sdk";
+
+const mail = new MisarMailClient(process.env.MISARMAIL_API_KEY!);
+```
+
+---
+
+## Resources
+
+Every group the client exposes, and every public method on it.
+
+### Send
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.email` | `send` | Transactional send — cc/bcc/reply-to, tags, metadata, `idempotency_key`. |
+| `mail.sandbox` | `list`, `clear` | Test sends captured instead of delivered. |
+
+### Campaigns and tests
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.campaigns` | `list`, `create`, `get`, `update`, `delete`, `send` | Marketing campaigns: draft, edit, queue for send. |
+| `mail.abTests` | `list`, `create`, `selectWinner`, `setWinner` | Subject, content, send-time, from-name and preheader splits, and winner selection. |
+
+### Audience
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.contacts` | `list`, `create`, `delete`, `import` | Subscribers, plus bulk import. |
+| `mail.segments` | `list`, `get`, `create`, `update`, `delete`, `preview`, `refresh`, `members` | Dynamic audience segments and their membership. |
+| `mail.landingPages` | `list`, `get`, `create`, `update`, `delete` | Hosted landing pages with an email capture form. |
+| `mail.forms` | `listForms`, `getForm`, `getFormSubmissions`, `list`, `get`, `create`, `update`, `delete`, `submissions`, `embed` | Signup forms, their embed code and their submissions. |
+| `mail.preferences` | `get`, `update` | Token-authenticated subscriber preference centre. |
+
+### Content
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.templates` | `list`, `create`, `render` | Reusable templates and server-side variable rendering. |
+| `mail.marketplace` | `listMarketplaceItems`, `getMarketplaceItem`, `list`, `get`, `submitListing`, `download`, `purchase`, `listReviews`, `submitReview`, `recordPremiumPurchase`, `listPremiumPurchases`, `submitCommunityTemplate`, `listSubmissions`, `myListings`, `updateListing` | Template marketplace: browse, buy, download, review, publish. |
+| `mail.drafts` | `list`, `create`, `update`, `delete` | Saved drafts. |
+| `mail.labels` | `list`, `create`, `delete` | Mailbox labels. |
+| `mail.ai` | `subjectLines` | AI-generated subject lines. |
+
+### Automations
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.automations` | `list`, `create`, `get`, `update`, `delete`, `activate` | Trigger-based workflows — welcome series, drips, re-engagement. |
+
+### Deliverability and sending infrastructure
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.domains` | `listDomains`, `addDomain`, `verifyDomain`, `list`, `create`, `get`, `verify`, `delete` | Sending domains and their DNS verification. |
+| `mail.dmarc` | `listDomains`, `check`, `addDomain`, `removeDomain` | Live SPF/DKIM/DMARC record checks and monitored domains. |
+| `mail.deliverability` | `audit`, `history`, `playbooks`, `score`, `sendTime` | Deliverability score, audit and remediation guidance. |
+| `mail.dedicatedIps` | `list`, `get`, `create`, `update` | Dedicated sending IPs. |
+| `mail.warmup` | `get` | IP/domain warm-up progress and today's remaining capacity. |
+| `mail.inbound` | `list`, `create`, `delete` | Inbound routing domains, so replies land in the unified inbox. |
+| `mail.settings` | `listSignatures`, `createSignature`, `updateSignature`, `deleteSignature`, `listSmtpPools`, `upsertSmtpPool`, `deleteSmtpPool`, `listDedicatedIps`, `requestDedicatedIp`, `listDmarcDomains`, `addDmarcDomain`, `deleteDmarcDomain`, `listIpPools`, `createIpPool`, `deleteIpPool`, `getUnsubscribePage`, `updateUnsubscribePage`, `getWhitelabel`, `updateWhitelabel`, `auditLogs` | Signatures, SMTP and IP pools, unsubscribe page, whitelabel, audit logs. |
+
+### Mailbox and inbox
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.emails` | `list`, `get`, `update` | Stored messages in the mailbox. |
+| `mail.emailAccounts` | `list` | Connected mailbox accounts. |
+| `mail.inbox` | `list`, `get`, `send`, `snooze`, `unsubscribe`, `categorize`, `improve`, `reply`, `summarize` | Unified-inbox conversations, plus AI improve/reply/summarize. |
+| `mail.notifications` | `list`, `markRead` | In-app notifications. |
+
+### Analytics and attribution
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.analytics` | `get` | Delivery and engagement stats — aggregate, or one campaign. |
+| `mail.track` | `event`, `purchase` | Custom events and ecommerce purchases. |
+| `mail.revenue` | `attribution` | Revenue attributed back to email. |
+| `mail.usage` | `get` | Metered usage for a period. |
+
+### Validation
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.validate` | `email`, `batch`, `balance` | Address validation, and the credit balance behind it. |
+
+### Plan, billing and credits
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.plan` | `get`, `monetization` | Current plan, quotas and monetization stats. |
+| `mail.billing` | `subscription`, `checkout` | Subscription state and checkout. |
+| `mail.subscription` | `get`, `planLimits`, `upsert`, `cancel` | Subscription read/write and per-product plan limits. |
+| `mail.wallet` | `get`, `debit`, `credit` | Credit balance, credit and debit. |
+| `mail.creditRates` | `list` | What each metered action costs in credits. |
+| `mail.teamMembers` | `get` | Team members on the account. |
+| `mail.monetization` | `recordTip` | Newsletter tips. |
+| `mail.referrals` | `stats`, `generate`, `leaderboard`, `logShare`, `milestones`, `milestoneClaims`, `claim`, `nudge` | Referral stats, links, milestones and leaderboard. |
+
+### Developer
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.keys` | `list`, `create`, `delete` | API keys — create, list, revoke. |
+| `mail.webhooks` | `list`, `create`, `get`, `update`, `delete`, `test` | Webhook endpoints, plus a test delivery. |
+| `mail.integrations` | `listIntegrations`, `getIntegration`, `toggleIntegration` | Third-party integrations and their sync state. |
+| `mail.streaming` | `generateEmail`, `campaignSend`, `stream` | The two Server-Sent Events endpoints. |
+
+---
+
+## Client
+
+| Thing | Detail |
+| --- | --- |
+| Entry point | `new MisarMailClient(apiKey, options?)` — every resource is a readonly property on it. |
+| `options.baseURL` | `https://api.misar.io/mail/v1` |
+| `options.maxRetries` | `3` |
+| `options.timeoutMs` | `30_000` |
+| Transport | `fetch` with an `AbortController` timeout. |
+| Retried | `429`, `500`, `502`, `503`, `504` and network failures, with 200 ms → 400 ms → 800 ms backoff. |
+| Never retried | Plan refusals, and streams. |
+| Errors | `MisarMailError`, `MisarMailNetworkError`, `MisarMailPlanLimitError` — all exported from the package root. |
+| Webhook verifier | Not shipped here. Verify `HMAC-SHA256(timestamp + "." + rawBody)` from `X-Misar-Signature` yourself with `node:crypto` and a constant-time compare. (Go, Python, Ruby and Dart ship one.) |
+
+---
 
 ## Quick start
 
@@ -340,6 +437,15 @@ for await (const progress of mail.streaming.campaignSend(campaign.data.id)) {
 }
 ```
 
-## License
+---
 
-MIT — see [LICENSE](LICENSE).
+## Links
+
+- Website — https://www.misarmail.com
+- App — https://mail.misar.io
+- Parent — https://misar.io
+- Documentation — https://docs.misar.io/mail
+- Source — https://github.com/Misar-AI/misarmail-sdks
+- npm — https://www.npmjs.com/package/@misarmail/sdk
+
+MIT © [Misar AI](https://misar.io)

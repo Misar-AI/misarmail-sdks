@@ -1,90 +1,166 @@
 # MisarMail Rust SDK
 
-[MisarMail](https://misarmail.com) is a transactional **and** marketing email platform:
-one API for the receipts and password resets your product sends, and for the campaigns,
-segments and automations your marketing team runs on the same contact list and the same
-verified domains. This crate is the Rust client for that API — an async client over
-`reqwest`/`tokio` covering 33 resource groups, for backends, workers and CLIs that want
-one dependency instead of an SMTP relay plus a marketing tool.
+> Async Rust client for MisarMail — transactional send, campaigns, deliverability and analytics over reqwest/tokio.
 
-Full reference: [`misarmail.com/docs`](https://misarmail.com/docs).
+[![crates.io](https://img.shields.io/crates/v/misarmail)](https://crates.io/crates/misarmail)
+[![docs.rs](https://img.shields.io/docsrs/misarmail)](https://docs.rs/misarmail)
+[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-## Features
+**33 resource groups · 92 methods · SSE streaming · typed plan-limit errors**
 
-Grouped the way the client exposes them. Every name below is a public field on
-`MisarMailClient`.
+MisarMail is one API for both halves of your email: the receipts and password resets your product sends, and the campaigns, segments and automations your marketing team runs on the same contact list and the same verified domains.
 
-- **Transactional send** — `email.send`; `sandbox.send`/`list`/`delete` for test sends
-  that never leave the building.
-- **Campaigns** — `campaigns` `list`/`create`/`get`/`update`/`send_campaign`/`delete`;
-  `ab_tests` `list`/`create`/`get`/`set_winner`.
-- **Audience** — `contacts` (`list`, `create`, `get`, `update`, `delete`,
-  `import_contacts`) and `segments.members`.
-- **Content** — `templates` (`list`, `create`, `get`, `update`, `delete`, `render`),
-  `landing_pages.create`, and `ai.subject_lines` for generated subject lines.
-- **Automations** — `automations` `list`/`create`/`get`/`update`/`delete`/`activate`.
-- **Deliverability and sending infrastructure** — `domains` (add, `verify`, delete),
-  `dmarc` (`check`, `list_domains`, `add_domain`, `remove_domain`), `deliverability`
-  (`audit`, `score`), `dedicated_ips`, `warmup.get`, `inbound` addresses.
-- **Mailbox** — `emails` (`list`, `get`, `update`), `email_accounts.list`.
-- **Analytics and attribution** — `analytics.overview` (aggregate, or per-campaign when
-  you pass `campaignId`), `track.event`, `track.purchase`, `revenue.attribution`,
-  `usage.get`.
-- **Validation** — `validate.email` for one address, `validate.balance` for credits left.
-- **Plan, billing and credits** — `plan.get`, `plan.limits`, `plan.monetization`,
-  `billing` (`subscription`, `checkout`), `subscription` (`get`, `upsert`, `cancel`),
-  `wallet` (`get`, `credit`, `debit`), `credit_rates.list`, `team_members.get`,
-  `monetization.tip`.
-- **Developer** — `keys` (`list`, `create`, `get`, `revoke`), `webhooks` (CRUD plus
-  `test`), `streaming`.
+An async client over `reqwest`/`tokio` for backends, workers and CLIs. Payloads are `serde_json::Value` in and out — no generated structs, so nothing breaks when the API adds a field.
 
-Narrower than the TypeScript SDK, which is the reference implementation: forms, labels,
-drafts, marketplace, inbox conversations, preferences, referrals, notifications,
-integrations and workspace settings have no Rust methods yet, and `segments` exposes only
-`members`. Reach for the HTTP API directly if you need one of those.
-
-## What's in the package
-
-- **`MisarMailClient`** — the one entry point. Every resource is a public field on it
-  (`mail.contacts`, `mail.campaigns`, …); there is nothing else to construct.
-- **Builder options** — `MisarMailClient::new(api_key)` then
-  `.with_base_url(..)`, `.with_api_base(..)`, `.with_max_retries(..)`. Defaults:
-  `https://api.misar.io/mail/v1`, `https://api.misar.io/mail`, 3 attempts.
-- **Payloads are `serde_json::Value`.** Requests take `json!({..})` and responses come
-  back as `Value` — the crate does not ship generated request/response structs, so nothing
-  breaks when the API adds a field. Deserialize into your own types where you want them.
-- **Transport** — `reqwest` with a 30-second timeout. `429`, `500`, `502`, `503` and `504`
-  are retried with exponential backoff (200 ms, 400 ms), as are network failures. A plan
-  refusal is never retried.
-- **Errors** — one `MisarMailError` enum: `Api`, `PlanLimit`, `Network`, `Json`.
-- **SSE streaming** — `mail.streaming.generate_email()` and
-  `mail.streaming.campaign_send()` return an `EventStream` of `StreamEvent`; see
-  [Streaming](#streaming).
-- **No webhook signature verifier.** `mail.webhooks` manages webhook *endpoints*
-  (list/create/get/update/delete/test). MisarMail signs deliveries as
-  `HMAC-SHA256(timestamp + "." + raw_body)` in the `X-Misar-Signature` header alongside
-  `X-Misar-Timestamp`, but this crate ships no helper to check it — verify it yourself
-  with an HMAC crate and a constant-time compare. (The Go, Python, Ruby, Dart and Flutter
-  SDKs do ship one.)
+---
 
 ## Install
 
+### cargo add
+
+```bash
+cargo add misarmail tokio serde_json
+cargo add futures-util   # only if you use the SSE streams
+```
+
+### Cargo.toml
+
 ```toml
 [dependencies]
-misarmail = "1.0"
+misarmail = "5.0"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 futures-util = "0.3"   # only for streaming
 ```
 
-## Auth
+---
 
-Use a MisarMail developer key (`msk_…`), created at
-[misarmail.com/developers](https://misarmail.com/developers). It is sent as
-`Authorization: Bearer msk_…`.
+## Authentication
+
+Create a developer key at https://mail.misar.io/developers. It starts with `msk_` and is
+sent as `Authorization: Bearer msk_…`.
 
 Every call is metered against the subscription attached to that key. There is no
-client-side limit checking — the server decides, and the SDK surfaces its answer.
+client-side limit checking — the server decides, and the SDK surfaces its answer. A plan
+refusal answers **403** with `code: "plan_limit_exceeded"` and is never retried.
+
+```rust
+use misarmail::MisarMailClient;
+
+let mail = MisarMailClient::new(&std::env::var("MISARMAIL_API_KEY").unwrap());
+```
+
+---
+
+## Resources
+
+Every group the client exposes, and every public method on it.
+
+### Send
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.email` | `send` | Transactional send — cc/bcc/reply-to, tags, metadata, `idempotency_key`. |
+| `mail.sandbox` | `send`, `list`, `delete` | Test sends captured instead of delivered. |
+
+### Campaigns and tests
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.campaigns` | `list`, `create`, `get`, `update`, `send_campaign`, `delete` | Marketing campaigns: draft, edit, queue for send. |
+| `mail.ab_tests` | `list`, `create`, `get`, `set_winner` | Subject, content, send-time, from-name and preheader splits, and winner selection. |
+
+### Audience
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.contacts` | `list`, `create`, `get`, `update`, `delete`, `import_contacts` | Subscribers, plus bulk import. |
+| `mail.segments` | `members` | Dynamic audience segments and their membership. |
+| `mail.landing_pages` | `create` | Hosted landing pages with an email capture form. |
+
+### Content
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.templates` | `list`, `create`, `get`, `update`, `delete`, `render` | Reusable templates and server-side variable rendering. |
+| `mail.ai` | `subject_lines` | AI-generated subject lines. |
+
+### Automations
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.automations` | `list`, `create`, `get`, `update`, `delete`, `activate` | Trigger-based workflows — welcome series, drips, re-engagement. |
+
+### Deliverability and sending infrastructure
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.domains` | `list`, `create`, `get`, `verify`, `delete` | Sending domains and their DNS verification. |
+| `mail.dmarc` | `check`, `list_domains`, `add_domain`, `remove_domain` | Live SPF/DKIM/DMARC record checks and monitored domains. |
+| `mail.deliverability` | `audit`, `score` | Deliverability score, audit and remediation guidance. |
+| `mail.dedicated_ips` | `list`, `create`, `update`, `delete` | Dedicated sending IPs. |
+| `mail.warmup` | `get` | IP/domain warm-up progress and today's remaining capacity. |
+| `mail.inbound` | `list`, `create`, `get`, `delete` | Inbound routing domains, so replies land in the unified inbox. |
+
+### Mailbox and inbox
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.emails` | `list`, `get`, `update` | Stored messages in the mailbox. |
+| `mail.email_accounts` | `list` | Connected mailbox accounts. |
+
+### Analytics and attribution
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.analytics` | `overview` | Delivery and engagement stats — aggregate, or one campaign. |
+| `mail.track` | `event`, `purchase` | Custom events and ecommerce purchases. |
+| `mail.revenue` | `attribution` | Revenue attributed back to email. |
+| `mail.usage` | `get` | Metered usage for a period. |
+
+### Validation
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.validate` | `email`, `balance` | Address validation, and the credit balance behind it. |
+
+### Plan, billing and credits
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.plan` | `get`, `monetization`, `limits` | Current plan, quotas and monetization stats. |
+| `mail.billing` | `subscription`, `checkout` | Subscription state and checkout. |
+| `mail.subscription` | `get`, `upsert`, `cancel` | Subscription read/write and per-product plan limits. |
+| `mail.wallet` | `get`, `credit`, `debit` | Credit balance, credit and debit. |
+| `mail.credit_rates` | `list` | What each metered action costs in credits. |
+| `mail.team_members` | `get` | Team members on the account. |
+| `mail.monetization` | `tip` | Newsletter tips. |
+
+### Developer
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.keys` | `list`, `create`, `get`, `revoke` | API keys — create, list, revoke. |
+| `mail.webhooks` | `list`, `create`, `get`, `update`, `delete`, `test` | Webhook endpoints, plus a test delivery. |
+| `mail.streaming` | `generate_email`, `campaign_send` | The two Server-Sent Events endpoints. |
+
+---
+
+## Client
+
+| Thing | Detail |
+| --- | --- |
+| Entry point | `MisarMailClient::new(api_key)` — every resource is a public field on it. |
+| Builder | `.with_base_url(..)`, `.with_api_base(..)`, `.with_max_retries(..)`. |
+| Defaults | `https://api.misar.io/mail/v1`, API base `https://api.misar.io/mail`, 3 attempts. |
+| Payloads | `serde_json::Value` in, `Value` out. |
+| Transport | `reqwest`, 30-second timeout. |
+| Retried | `429`, `500`, `502`, `503`, `504` and network failures, 200 ms then 400 ms. |
+| Never retried | Plan refusals, and streams. |
+| Errors | One `MisarMailError` enum: `Api`, `PlanLimit`, `Network`, `Json`. `err.upgrade_url()` works on any variant. |
+| Webhook verifier | Not shipped here — verify `HMAC-SHA256(timestamp + "." + raw_body)` yourself with an HMAC crate and a constant-time compare. (Go, Python, Ruby and Dart ship one.) |
+
+---
 
 ## Quick start
 
@@ -347,6 +423,15 @@ while let Some(frame) = progress.next().await {
 }
 ```
 
-## License
+---
 
-MIT — see [LICENSE](LICENSE).
+## Links
+
+- Website — https://www.misarmail.com
+- App — https://mail.misar.io
+- Parent — https://misar.io
+- Documentation — https://docs.misar.io/mail
+- Source — https://github.com/Misar-AI/misarmail-sdks
+- crates.io — https://crates.io/crates/misarmail
+
+MIT © [Misar AI](https://misar.io)

@@ -1,9 +1,17 @@
 name: misarmail_flutter
-description: Official Flutter SDK for MisarMail — secure key storage, retry, full API coverage for iOS, Android, macOS, Web.
-version: 1.0.0
+description: "Send transactional email and run marketing campaigns from Flutter apps: MisarMail's API with secure key storage, retries and SSE streaming on iOS, Android, macOS and web."
+version: 5.0.0
 homepage: https://misarmail.com/docs/sdks/flutter
 repository: https://github.com/Misar-AI/misarmail-sdks
 issue_tracker: https://github.com/Misar-AI/misarmail-sdks/issues
+documentation: https://misarmail.com/docs
+
+topics:
+  - email
+  - transactional-email
+  - marketing
+  - api-client
+  - secure-storage
 
 environment:
   sdk: ">=3.0.0 <4.0.0"

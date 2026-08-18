@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "misarmail"
-version = "1.0.0"
+version = "5.0.0"
 description = "Send transactional email and run marketing campaigns from Python: MisarMail's HTTP API for sends, campaigns, contacts, templates, automations, domain and DMARC checks, address validation, tracking, analytics and webhooks — sync and async, retries, SSE streaming."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -49,9 +49,12 @@ classifiers = [
 dependencies = ["httpx>=0.27"]
 
 [project.urls]
-Homepage = "https://misarmail.com"
-Documentation = "https://misarmail.com/docs/sdks/python"
+Homepage = "https://www.misarmail.com"
+Documentation = "https://docs.misar.io/mail"
 Repository = "https://github.com/Misar-AI/misarmail-sdks"
+Issues = "https://github.com/Misar-AI/misarmail-sdks/issues"
+Changelog = "https://github.com/Misar-AI/misarmail-sdks/blob/main/python/CHANGELOG.md"
+"Source (this SDK)" = "https://github.com/Misar-AI/misarmail-sdks/tree/main/python"
 
 [project.optional-dependencies]
 # MisarMailSocket raises an ImportError pointing at `misarmail[websocket]`, so

@@ -1,127 +1,162 @@
 # MisarMail Dart SDK
 
-MisarMail is a transactional **and** marketing email platform. This package is the
-Dart client for its HTTP API at `https://api.misar.io/mail/v1`: transactional
-sends, marketing campaigns with A/B tests, contacts and segments, templates,
-automations, sending-domain and DMARC verification, deliverability scoring,
-address validation, event and revenue tracking, analytics, wallet and plan
-standing, API keys and webhooks. It targets Dart `>=3.0.0 <4.0.0` and depends only
-on `package:http` and `package:crypto`, so it runs in servers, CLIs and background
-isolates alike. Flutter apps should use
-[`misarmail_flutter`](https://pub.dev/packages/misarmail_flutter), which adds
-secure on-device key storage.
+> Send transactional email and run marketing campaigns from Dart — servers, CLIs and background isolates.
 
-Product: [misarmail.com](https://misarmail.com) · Full reference:
-[misarmail.com/docs](https://misarmail.com/docs)
+[![pub](https://img.shields.io/pub/v/misarmail)](https://pub.dev/packages/misarmail)
+[![dart](https://img.shields.io/badge/dart-%3E%3D3.0.0-0175C2)](https://pub.dev/packages/misarmail)
+[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-## Features
+**33 resource groups · 90 methods · SSE streaming · webhook signature verification**
 
-Only what this package actually exposes is listed.
+MisarMail is one API for both halves of your email: the receipts and password resets your product sends, and the campaigns, segments and automations your marketing team runs on the same contact list and the same verified domains.
 
-- **Transactional send** — `email.send`, with `cc`/`bcc`/`reply_to`, `tags`,
-  `metadata` and an `idempotency_key`. `sandbox.send`, `sandbox.list` and
-  `sandbox.delete` cover the test mailbox.
-- **Campaigns** — `campaigns` list/create/get/update/send/delete, plus `abTests`
-  list/create/get/setWinner.
-- **Audience** — `contacts` list/create/get/update/delete/importContacts,
-  `segments.members`, `landingPages.create`.
-- **Content** — `templates` list/create/get/update/delete/render (variable
-  substitution server-side) and `ai.subjectLines`.
-- **Automations** — `automations` list/create/get/update/delete/activate.
-- **Deliverability and sending infrastructure** — `domains` list/create/get/
-  verify/delete, `dmarc` check/listDomains/addDomain/removeDomain,
-  `deliverability.audit` and `deliverability.score`, `dedicatedIps`,
-  `warmup.get`, `inbound`.
-- **Stored mail** — `emails` list/get/update and `emailAccounts.list`.
-- **Analytics and attribution** — `analytics.overview`, `track.event`,
-  `track.purchase`, `revenue.attribution`, `usage.get`.
-- **Validation** — `validate.email` for a single address.
-- **Plan, billing and credits** — `plan.get`, `plan.monetization`, `subscription`
-  get/upsert/cancel, `wallet` get/credit/debit, `creditRates.list`,
-  `teamMembers.get`, `monetization.tip`, `billing.subscription`,
-  `billing.checkout`.
-- **Developer** — `keys` list/create/get/revoke, `webhooks`
-  list/create/get/update/delete/test, `streaming`.
+Dart `>=3.0.0 <4.0.0`, depending only on `package:http` and `package:crypto`. Every method returns `Future<Map<String, dynamic>>` — the decoded JSON envelope, not a generated model.
 
-Absent from this package, though the API has them: the shared inbox, forms, the
-template marketplace, drafts, labels, notifications, integrations, referrals, the
-subscriber preference centre, batch address validation and the `settings` group.
-Call those over plain HTTP for now.
-
-## What's in the package
-
-`MisarMailClient` is the only entry point. Resources hang off it as plain fields
-(`mail.contacts`, `mail.campaigns`, …) and every method returns
-`Future<Map<String, dynamic>>` — the decoded JSON envelope, not a generated model.
-Responses are enveloped, so read `response['data']`, `response['pagination']`, and
-so on.
-
-```dart
-MisarMailClient(
-  apiKey: 'msk_…',                      // required
-  baseUrl: 'https://api.misar.io/mail/v1', // default
-  maxRetries: 3,                        // default
-  httpClient: myClient,                 // optional package:http Client
-);
-```
-
-- **Transport.** One `http.Client`, reused for every call. Call `mail.close()`
-  when you are done. The SDK sets no request timeout of its own — supply an
-  `http.Client` that imposes one if you need it.
-- **Retries.** `429`, `500`, `502`, `503` and `504` are retried up to `maxRetries`
-  attempts in total (3 by default, so two retries), with an exponential backoff of
-  500 ms then 1 s. Transport failures follow the same budget.
-- **Streaming routes.** Both SSE endpoints live outside `/v1`; the client derives
-  that base by stripping the trailing `/v1` from `baseUrl`, so overriding
-  `baseUrl` moves both together.
-- **Errors.** `MisarMailError`, plus the subclasses `MisarMailPlanLimitError` and
-  `MisarMailNetworkError`.
-
-### Webhook signature verification
-
-This SDK does ship a verifier. MisarMail signs each webhook as
-`HMAC-SHA256(timestamp + "." + rawBody)` and sends the digest in
-`X-Misar-Signature` with the unix timestamp in `X-Misar-Timestamp`. Verify against
-the **raw** body — re-encoding a decoded map changes key order and whitespace, and
-therefore the digest. The comparison is constant-time and stale timestamps are
-rejected (`defaultToleranceSeconds` is 300).
-
-```dart
-import 'package:misarmail/misarmail.dart';
-
-final ok = verifyWebhookSignature(
-  payload: rawBody,
-  signature: headers['x-misar-signature']!,
-  timestamp: headers['x-misar-timestamp']!,
-  secret: endpointSigningSecret,
-  // toleranceSeconds: 300,
-);
-```
-
-`signWebhook(payload, timestamp, secret)` produces the same digest, which is what
-you want when writing tests for your own webhook consumer.
+---
 
 ## Install
+
+### dart pub
 
 ```bash
 dart pub add misarmail
 ```
 
-Or in `pubspec.yaml`:
+### pubspec.yaml
 
 ```yaml
 dependencies:
-  misarmail: ^1.0.0
+  misarmail: ^5.0.0
 ```
 
-## Auth
+---
 
-Use a MisarMail developer key with the `msk_` prefix, created at
-[misarmail.com/developers](https://misarmail.com/developers). The client sends it
-as `Authorization: Bearer msk_…` on every request, including the SSE streams.
+## Authentication
+
+Create a developer key at https://mail.misar.io/developers. It starts with `msk_` and is
+sent as `Authorization: Bearer msk_…`.
 
 Every call is metered against the subscription attached to that key. There is no
-client-side limit checking — the server decides and the SDK surfaces its answer.
+client-side limit checking — the server decides, and the SDK surfaces its answer. A plan
+refusal answers **403** with `code: "plan_limit_exceeded"` and is never retried.
+
+```dart
+import 'package:misarmail/misarmail.dart';
+
+final mail = MisarMailClient(apiKey: Platform.environment['MISARMAIL_API_KEY']!);
+```
+
+---
+
+## Resources
+
+Every group the client exposes, and every public method on it.
+
+### Send
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.email` | `send` | Transactional send — cc/bcc/reply-to, tags, metadata, `idempotency_key`. |
+| `mail.sandbox` | `send`, `list`, `delete` | Test sends captured instead of delivered. |
+
+### Campaigns and tests
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.campaigns` | `list`, `create`, `get`, `update`, `send`, `delete` | Marketing campaigns: draft, edit, queue for send. |
+| `mail.abTests` | `list`, `create`, `get`, `setWinner` | Subject, content, send-time, from-name and preheader splits, and winner selection. |
+
+### Audience
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.contacts` | `list`, `create`, `get`, `update`, `delete`, `importContacts` | Subscribers, plus bulk import. |
+| `mail.segments` | `members` | Dynamic audience segments and their membership. |
+| `mail.landingPages` | `create` | Hosted landing pages with an email capture form. |
+
+### Content
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.templates` | `list`, `create`, `get`, `update`, `delete`, `render` | Reusable templates and server-side variable rendering. |
+| `mail.ai` | `subjectLines` | AI-generated subject lines. |
+
+### Automations
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.automations` | `list`, `create`, `get`, `update`, `delete`, `activate` | Trigger-based workflows — welcome series, drips, re-engagement. |
+
+### Deliverability and sending infrastructure
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.domains` | `list`, `create`, `get`, `verify`, `delete` | Sending domains and their DNS verification. |
+| `mail.dmarc` | `check`, `listDomains`, `addDomain`, `removeDomain` | Live SPF/DKIM/DMARC record checks and monitored domains. |
+| `mail.deliverability` | `audit`, `score` | Deliverability score, audit and remediation guidance. |
+| `mail.dedicatedIps` | `list`, `create`, `update`, `delete` | Dedicated sending IPs. |
+| `mail.warmup` | `get` | IP/domain warm-up progress and today's remaining capacity. |
+| `mail.inbound` | `list`, `create`, `get`, `delete` | Inbound routing domains, so replies land in the unified inbox. |
+
+### Mailbox and inbox
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.emails` | `list`, `get`, `update` | Stored messages in the mailbox. |
+| `mail.emailAccounts` | `list` | Connected mailbox accounts. |
+
+### Analytics and attribution
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.analytics` | `overview` | Delivery and engagement stats — aggregate, or one campaign. |
+| `mail.track` | `event`, `purchase` | Custom events and ecommerce purchases. |
+| `mail.revenue` | `attribution` | Revenue attributed back to email. |
+| `mail.usage` | `get` | Metered usage for a period. |
+
+### Validation
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.validate` | `email` | Address validation, and the credit balance behind it. |
+
+### Plan, billing and credits
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.plan` | `get`, `monetization` | Current plan, quotas and monetization stats. |
+| `mail.billing` | `subscription`, `checkout` | Subscription state and checkout. |
+| `mail.subscription` | `get`, `upsert`, `cancel` | Subscription read/write and per-product plan limits. |
+| `mail.wallet` | `get`, `credit`, `debit` | Credit balance, credit and debit. |
+| `mail.creditRates` | `list` | What each metered action costs in credits. |
+| `mail.teamMembers` | `get` | Team members on the account. |
+| `mail.monetization` | `tip` | Newsletter tips. |
+
+### Developer
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.keys` | `list`, `create`, `get`, `revoke` | API keys — create, list, revoke. |
+| `mail.webhooks` | `list`, `create`, `get`, `update`, `delete`, `test` | Webhook endpoints, plus a test delivery. |
+| `mail.streaming` | `generateEmail`, `campaignSend` | The two Server-Sent Events endpoints. |
+
+---
+
+## Client
+
+| Thing | Detail |
+| --- | --- |
+| Entry point | `MisarMailClient(apiKey:, baseUrl:, maxRetries:, httpClient:)` — every resource is a field. |
+| `baseUrl` | `https://api.misar.io/mail/v1` |
+| Results | `Future<Map<String, dynamic>>` — read `response['data']`, `response['pagination']`, … |
+| Transport | One `http.Client`, reused. Call `mail.close()` when done. No timeout of its own — supply an `http.Client` that imposes one. |
+| Retried | `429`, `500`, `502`, `503`, `504` and transport failures — `maxRetries` attempts in total (3 by default), 500 ms then 1 s. |
+| Never retried | Plan refusals, and streams. |
+| Errors | `MisarMailError`, with `MisarMailPlanLimitError` and `MisarMailNetworkError` extending it. |
+| Webhook verifier | `verifyWebhookSignature` / `signWebhook`, `defaultToleranceSeconds` 300. |
+| Flutter | Use this package. [`misarmail_flutter`](https://pub.dev/packages/misarmail_flutter) is discontinued on pub.dev and marked `replacedBy: misarmail`. |
+
+---
 
 ## Quick start
 
@@ -337,6 +372,41 @@ await for (final event in mail.streaming.campaignSend(campaignId)) {
 A plan refusal on opening the stream raises `MisarMailPlanLimitError` before any
 frame arrives.
 
-## License
+---
 
-MIT — see [LICENSE](LICENSE).
+## Webhook signature verification
+
+This SDK does ship a verifier. MisarMail signs each webhook as
+`HMAC-SHA256(timestamp + "." + rawBody)` and sends the digest in
+`X-Misar-Signature` with the unix timestamp in `X-Misar-Timestamp`. Verify against
+the **raw** body — re-encoding a decoded map changes key order and whitespace, and
+therefore the digest. The comparison is constant-time and stale timestamps are
+rejected (`defaultToleranceSeconds` is 300).
+
+```dart
+import 'package:misarmail/misarmail.dart';
+
+final ok = verifyWebhookSignature(
+  payload: rawBody,
+  signature: headers['x-misar-signature']!,
+  timestamp: headers['x-misar-timestamp']!,
+  secret: endpointSigningSecret,
+  // toleranceSeconds: 300,
+);
+```
+
+`signWebhook(payload, timestamp, secret)` produces the same digest, which is what
+you want when writing tests for your own webhook consumer.
+
+---
+
+## Links
+
+- Website — https://www.misarmail.com
+- App — https://mail.misar.io
+- Parent — https://misar.io
+- Documentation — https://docs.misar.io/mail
+- Source — https://github.com/Misar-AI/misarmail-sdks
+- pub.dev — https://pub.dev/packages/misarmail
+
+MIT © [Misar AI](https://misar.io)

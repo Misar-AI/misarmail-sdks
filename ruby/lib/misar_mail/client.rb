@@ -836,7 +836,10 @@ module MisarMail
     end
 
     def parse_response(resp, status)
-      return {} if status == 204 || resp.body.nil? || resp.body.empty?
+      # Only a *successful* empty body means "no content". An error with an empty
+      # body — a bare 401, or anything a proxy stripped — must still raise, or the
+      # caller reads a failure as an empty result set.
+      return {} if status < 400 && (status == 204 || resp.body.nil? || resp.body.empty?)
 
       decoded = begin
         JSON.parse(resp.body)
@@ -846,6 +849,8 @@ module MisarMail
 
       if status >= 400
         msg = decoded.is_a?(Hash) ? (decoded["error"] || decoded["message"] || resp.body) : resp.body
+        # A stripped body leaves nothing to report; fall back to the reason phrase.
+        msg = resp.message.to_s if msg.nil? || msg.empty?
         raise ApiError.new(status, msg)
       end
 

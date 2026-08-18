@@ -182,7 +182,10 @@ class Client
                 continue;
             }
 
-            if ($status === 204 || $body === '' || $body === false) {
+            // Only a *successful* empty body means "no content". An error with an
+            // empty body — a bare 401, or anything a proxy stripped — must still
+            // raise, or the caller reads a failure as an empty result set.
+            if ($status < 400 && ($status === 204 || $body === '' || $body === false)) {
                 return [];
             }
 
@@ -192,7 +195,9 @@ class Client
                 $msg = is_array($decoded)
                     ? ($decoded['error'] ?? $decoded['message'] ?? (string) $body)
                     : (string) $body;
-                throw new ApiError($msg, $status);
+                // A stripped body leaves nothing to report; name the status so the
+                // exception still says something useful.
+                throw new ApiError($msg === '' ? "HTTP {$status}" : $msg, $status);
             }
 
             return is_array($decoded) ? $decoded : [];

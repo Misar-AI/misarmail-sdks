@@ -1,6 +1,6 @@
 {
   "name": "@misarmail/sdk",
-  "version": "1.0.0",
+  "version": "5.0.0",
   "description": "MisarMail's transactional and marketing email API in TypeScript: send mail, run campaigns and A/B tests, manage contacts, segments, templates and automations, verify domains and DMARC, validate addresses, track revenue, read analytics \u2014 43 typed resources, retries, SSE streaming, ESM+CJS.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -18,6 +18,9 @@
     "README.md",
     "LICENSE"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
@@ -41,15 +44,24 @@
     "webhooks",
     "sdk",
     "api-client",
-    "typescript"
+    "typescript",
+    "javascript",
+    "esm",
+    "sse",
+    "marketing-automation",
+    "segments",
+    "misar"
   ],
-  "author": "Misar AI <hello@misar.io>",
+  "author": "Misar AI <hello@misar.io> (https://misar.io)",
   "license": "MIT",
-  "homepage": "https://misarmail.com/docs/sdks/typescript",
+  "homepage": "https://www.misarmail.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Misar-AI/misarmail-sdks.git",
     "directory": "typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/Misar-AI/misarmail-sdks/issues"
   },
   "publishConfig": {
     "access": "public",

@@ -7,7 +7,8 @@
 // [LandingPagesResource]), content ([TemplatesResource], [AiResource]),
 // [AutomationsResource], sending infrastructure ([DomainsResource],
 // [DmarcResource], [DeliverabilityResource], [DedicatedIPsResource],
-// [WarmupResource], [InboundResource]), analytics and attribution
+// [WarmupResource], [InboundResource]), the mailbox ([EmailsResource],
+// [EmailAccountsResource]), analytics and attribution
 // ([AnalyticsResource], [TrackResource], [RevenueResource], [UsageResource]),
 // [ValidateResource], plan and credits ([PlanResource], [BillingResource],
 // [SubscriptionResource], [WalletResource], [CreditRatesResource],

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Misar-AI/misarmail-sdks/go/misarmail"
+	"github.com/Misar-AI/misarmail-sdks/go/v5/misarmail"
 )
 
 // sseServer replays a fixed body, optionally flushing it in pieces so a frame

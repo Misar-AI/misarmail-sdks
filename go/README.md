@@ -1,99 +1,160 @@
 # MisarMail Go SDK
 
-MisarMail is a transactional **and** marketing email platform. This is its
-official Go client for the HTTP API at `https://api.misar.io/mail/v1`:
-transactional sends, marketing campaigns with A/B tests, contacts, templates,
-automations, sending-domain and DMARC verification, deliverability scoring,
-address validation, event and revenue tracking, analytics, webhooks, keys,
-wallet and plan/billing.
+> Send transactional email and run marketing campaigns from Go — context-aware, standard library only.
 
-It targets **Go 1.22 or newer** (`go.mod`) and pulls in nothing outside the
-standard library. Every call takes a `context.Context`.
+[![Go Reference](https://pkg.go.dev/badge/github.com/Misar-AI/misarmail-sdks/go/v5.svg)](https://pkg.go.dev/github.com/Misar-AI/misarmail-sdks/go/v5)
+[![go](https://img.shields.io/badge/go-1.22%2B-00ADD8)](https://pkg.go.dev/github.com/Misar-AI/misarmail-sdks/go/v5)
+[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-Full reference: [misarmail.com/docs](https://misarmail.com/docs).
+**33 resource groups · 91 methods · SSE streaming · webhook signature verification**
 
-## Features
+MisarMail is one API for both halves of your email: the receipts and password resets your product sends, and the campaigns, segments and automations your marketing team runs on the same contact list and the same verified domains.
 
-Grouped by the resource fields on `*misarmail.Client`:
+Go 1.22+, nothing outside the standard library, and every call takes a `context.Context`. Most calls return a typed struct pointer; the route-spec endpoints return `map[string]any`.
 
-- **Transactional send** — `Email.Send`; `Sandbox` (`Send`, `List`, `Delete`)
-  for a send that is captured instead of delivered.
-- **Campaigns** — `Campaigns` (`List`, `Create`, `Get`, `Update`, `Send`,
-  `Delete`) and `ABTests` (`List`, `Create`, `Get`, `SetWinner`).
-- **Audience** — `Contacts` (`List`, `Create`, `Get`, `Update`, `Delete`,
-  `Import`), `Segments.Members`, `LandingPages.Create`.
-- **Content** — `Templates` (`List`, `Create`, `Get`, `Update`, `Delete`,
-  `Render` with variable substitution) and `Ai.SubjectLines`.
-- **Automations** — `Automations` (`List`, `Create`, `Get`, `Update`, `Delete`,
-  `Activate`).
-- **Deliverability and sending infrastructure** — `Domains` (`List`, `Create`,
-  `Get`, `Verify`, `Delete`), `Dmarc` (`Check`, `ListDomains`, `AddDomain`,
-  `RemoveDomain`), `Deliverability` (`Audit`, `Score`), `DedicatedIPs`,
-  `Warmup.Get`, `Inbound` routes, `EmailAccounts.List`, `Emails` (`List`,
-  `Get`, `Update`).
-- **Analytics and attribution** — `Analytics.Overview`, `Track` (`Event`,
-  `Purchase`), `Revenue.Attribution`, `Usage.Get`.
-- **Validation** — `Validate.Email`.
-- **Plan, billing and credits** — `Plan` (`Get`, `Limits`, `Monetization`),
-  `Billing` (`Subscription`, `Checkout`), `Subscription` (`Get`, `Upsert`,
-  `Cancel`), `Wallet` (`Get`, `Credit`, `Debit`), `CreditRates.List`,
-  `TeamMembers.Get`, `Monetization.Tip`.
-- **Developer** — `Keys` (`List`, `Create`, `Get`, `Revoke`), `Webhooks`
-  (`List`, `Create`, `Get`, `Update`, `Delete`, `Test`), `Streaming`.
-
-Some route groups that other MisarMail SDKs expose are **not** in this client:
-forms, the subscriber preference centre, the template marketplace, drafts and
-labels, the shared inbox, notifications, integrations, workspace settings,
-referrals, batch address validation, and segment CRUD beyond
-`Segments.Members`. Call those over HTTP directly until they land here.
-
-Aliases and workspaces are deliberately absent everywhere: those routes accept
-a browser session only, never an `msk_` key.
-
-## What's in the package
-
-`misarmail.New(apiKey string, opts ...Option) *Client` builds the client. Each
-resource hangs off it as an exported field (`mail.Contacts`, `mail.Campaigns`,
-…), and most calls return a typed struct pointer; the endpoints added from the
-route spec return `map[string]any`.
-
-Options, all with `With` prefixes: `WithBaseURL`, `WithAPIBase`,
-`WithMaxRetries`, `WithTimeout`, `WithHTTPClient`.
-
-Transport defaults, read from `misarmail/client.go`:
-
-| Behaviour | Default |
-| --- | --- |
-| Base URL | `https://api.misar.io/mail/v1` |
-| API base (routes outside `/v1`) | `https://api.misar.io/mail` |
-| Attempts | 3 (`WithMaxRetries`) |
-| Back-off | 200ms doubling per attempt |
-| HTTP timeout | 30s (`WithTimeout`) |
-| Retried statuses | 429, 500, 502, 503, 504 |
-
-Errors are three concrete types — `*APIError`, `*NetworkError` and
-`*PlanLimitError` — matched with `errors.As`. `Streaming` reads the two
-Server-Sent Events endpoints. Inbound webhooks are verified in-package with
-`VerifyWebhookSignature` / `SignWebhook`.
+---
 
 ## Install
 
+### go get
+
 ```bash
-go get github.com/Misar-AI/misarmail-sdks/go
+go get github.com/Misar-AI/misarmail-sdks/go/v5
 ```
+
+### Import
 
 ```go
-import "github.com/Misar-AI/misarmail-sdks/go/misarmail"
+import "github.com/Misar-AI/misarmail-sdks/go/v5/misarmail"
 ```
 
-## Auth
+---
 
-Use a MisarMail developer key (`msk_…`), created at
-[misarmail.com/developers](https://misarmail.com/developers). It is sent as
-`Authorization: Bearer msk_…`.
+## Authentication
+
+Create a developer key at https://mail.misar.io/developers. It starts with `msk_` and is
+sent as `Authorization: Bearer msk_…`.
 
 Every call is metered against the subscription attached to that key. There is no
-client-side limit checking — the server decides, and the SDK surfaces its answer.
+client-side limit checking — the server decides, and the SDK surfaces its answer. A plan
+refusal answers **403** with `code: "plan_limit_exceeded"` and is never retried.
+
+```go
+mail := misarmail.New(os.Getenv("MISARMAIL_API_KEY"))
+```
+
+---
+
+## Resources
+
+Every group the client exposes, and every public method on it.
+
+### Send
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Email` | `Send` | Transactional send — cc/bcc/reply-to, tags, metadata, `idempotency_key`. |
+| `mail.Sandbox` | `Send`, `List`, `Delete` | Test sends captured instead of delivered. |
+
+### Campaigns and tests
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Campaigns` | `List`, `Create`, `Get`, `Update`, `Send`, `Delete` | Marketing campaigns: draft, edit, queue for send. |
+| `mail.ABTests` | `List`, `Create`, `Get`, `SetWinner` | Subject, content, send-time, from-name and preheader splits, and winner selection. |
+
+### Audience
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Contacts` | `List`, `Create`, `Get`, `Update`, `Delete`, `Import` | Subscribers, plus bulk import. |
+| `mail.Segments` | `Members` | Dynamic audience segments and their membership. |
+| `mail.LandingPages` | `Create` | Hosted landing pages with an email capture form. |
+
+### Content
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Templates` | `List`, `Create`, `Get`, `Update`, `Delete`, `Render` | Reusable templates and server-side variable rendering. |
+| `mail.Ai` | `SubjectLines` | AI-generated subject lines. |
+
+### Automations
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Automations` | `List`, `Create`, `Get`, `Update`, `Delete`, `Activate` | Trigger-based workflows — welcome series, drips, re-engagement. |
+
+### Deliverability and sending infrastructure
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Domains` | `List`, `Create`, `Get`, `Verify`, `Delete` | Sending domains and their DNS verification. |
+| `mail.Dmarc` | `Check`, `ListDomains`, `AddDomain`, `RemoveDomain` | Live SPF/DKIM/DMARC record checks and monitored domains. |
+| `mail.Deliverability` | `Audit`, `Score` | Deliverability score, audit and remediation guidance. |
+| `mail.DedicatedIPs` | `List`, `Create`, `Update`, `Delete` | Dedicated sending IPs. |
+| `mail.Warmup` | `Get` | IP/domain warm-up progress and today's remaining capacity. |
+| `mail.Inbound` | `List`, `Create`, `Get`, `Delete` | Inbound routing domains, so replies land in the unified inbox. |
+
+### Mailbox and inbox
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Emails` | `List`, `Get`, `Update` | Stored messages in the mailbox. |
+| `mail.EmailAccounts` | `List` | Connected mailbox accounts. |
+
+### Analytics and attribution
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Analytics` | `Overview` | Delivery and engagement stats — aggregate, or one campaign. |
+| `mail.Track` | `Event`, `Purchase` | Custom events and ecommerce purchases. |
+| `mail.Revenue` | `Attribution` | Revenue attributed back to email. |
+| `mail.Usage` | `Get` | Metered usage for a period. |
+
+### Validation
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Validate` | `Email` | Address validation, and the credit balance behind it. |
+
+### Plan, billing and credits
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Plan` | `Get`, `Monetization`, `Limits` | Current plan, quotas and monetization stats. |
+| `mail.Billing` | `Subscription`, `Checkout` | Subscription state and checkout. |
+| `mail.Subscription` | `Get`, `Upsert`, `Cancel` | Subscription read/write and per-product plan limits. |
+| `mail.Wallet` | `Get`, `Credit`, `Debit` | Credit balance, credit and debit. |
+| `mail.CreditRates` | `List` | What each metered action costs in credits. |
+| `mail.TeamMembers` | `Get` | Team members on the account. |
+| `mail.Monetization` | `Tip` | Newsletter tips. |
+
+### Developer
+
+| Resource | Methods | What it covers |
+| --- | --- | --- |
+| `mail.Keys` | `List`, `Create`, `Get`, `Revoke` | API keys — create, list, revoke. |
+| `mail.Webhooks` | `List`, `Create`, `Get`, `Update`, `Delete`, `Test` | Webhook endpoints, plus a test delivery. |
+| `mail.Streaming` | `GenerateEmail`, `CampaignSend` | The two Server-Sent Events endpoints. |
+
+---
+
+## Client
+
+| Thing | Detail |
+| --- | --- |
+| Entry point | `misarmail.New(apiKey string, opts ...Option) *Client` — every resource is an exported field. |
+| Options | `WithBaseURL`, `WithAPIBase`, `WithMaxRetries`, `WithTimeout`, `WithHTTPClient`. |
+| Base URL | `https://api.misar.io/mail/v1` |
+| API base (outside `/v1`) | `https://api.misar.io/mail` |
+| Attempts / backoff | 3, doubling from 200 ms. |
+| HTTP timeout | 30s |
+| Retried | `429`, `500`, `502`, `503`, `504` |
+| Never retried | Plan refusals, and streams. |
+| Errors | `*APIError`, `*NetworkError`, `*PlanLimitError` — match with `errors.As`. |
+| Webhook verifier | `VerifyWebhookSignature` / `SignWebhook`, tolerance `DefaultWebhookTolerance` (300s). |
+
+---
 
 ## Quick start
 
@@ -105,7 +166,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Misar-AI/misarmail-sdks/go/misarmail"
+	"github.com/Misar-AI/misarmail-sdks/go/v5/misarmail"
 )
 
 func main() {
@@ -295,6 +356,15 @@ err := mail.Streaming.GenerateEmail(ctx,
 	})
 ```
 
-## License
+---
 
-MIT — see [LICENSE](LICENSE).
+## Links
+
+- Website — https://www.misarmail.com
+- App — https://mail.misar.io
+- Parent — https://misar.io
+- Documentation — https://docs.misar.io/mail
+- Source — https://github.com/Misar-AI/misarmail-sdks
+- pkg.go.dev — https://pkg.go.dev/github.com/Misar-AI/misarmail-sdks/go/v5
+
+MIT © [Misar AI](https://misar.io)
