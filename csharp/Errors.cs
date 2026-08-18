@@ -1,22 +1,33 @@
 using System;
 
-namespace Misar.Mail;
+namespace MisarMail;
 
 /// <summary>
-/// Thrown for any non-2xx response, and for transport failures with status 0.
+/// Thrown when the MisarMail API returns a non-2xx HTTP response, or when a
+/// transport failure prevents the request from completing.
 /// </summary>
-public sealed class MisarMailException : Exception
+/// <remarks>
+/// For transport failures <see cref="Status"/> is <c>0</c>. The type is open
+/// rather than sealed because <see cref="MisarMailNetworkException"/> and
+/// <see cref="MisarMailPlanLimitException"/> both narrow it, and callers catch
+/// the base type when they only care that the call failed.
+/// </remarks>
+public class MisarMailException : Exception
 {
-    public MisarMailException(int status, string message, string errorType = "api_error")
-        : base($"misar-mail: API error {status} ({errorType}): {message}")
-    {
-        Status = status;
-        ErrorType = errorType;
-    }
-
+    /// <summary>HTTP status code returned by the server, or <c>0</c> for transport failures.</summary>
     public int Status { get; }
 
-    public string ErrorType { get; }
+    public MisarMailException(int status, string message)
+        : base($"MisarMailException({status}): {message}")
+    {
+        Status = status;
+    }
+
+    public MisarMailException(int status, string message, Exception inner)
+        : base($"MisarMailException({status}): {message}", inner)
+    {
+        Status = status;
+    }
 
     /// <summary>
     /// The key was rejected outright — missing, revoked, expired, or issued for
@@ -35,6 +46,19 @@ public sealed class MisarMailException : Exception
 
     /// <summary>Worth retrying as-is: transient server or rate-limit conditions.</summary>
     public bool IsRetryable => Status == 429 || (Status >= 500 && Status < 600);
+}
+
+/// <summary>
+/// Thrown when a network-level error prevents the request from completing,
+/// or when the maximum number of retries is exhausted.
+/// </summary>
+public sealed class MisarMailNetworkException : MisarMailException
+{
+    public MisarMailNetworkException(string message)
+        : base(0, message) { }
+
+    public MisarMailNetworkException(string message, Exception inner)
+        : base(0, message, inner) { }
 }
 
 /// <summary>
