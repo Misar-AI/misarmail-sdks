@@ -3,6 +3,8 @@ require "net/http"
 require "uri"
 require "json"
 
+require_relative "core/query"
+
 module MisarMail
   BASE_URL     = "https://api.misar.io/mail/v1"
   API_BASE     = "https://api.misar.io/mail"
@@ -15,6 +17,24 @@ module MisarMail
   class Resource
     def initialize(client)
       @client = client
+    end
+
+    private
+
+    # Every generated method that takes optional filters builds its path as
+    # query(compact(...)), but neither helper had a definition anywhere in the
+    # gem — so DmarcResource#check, EmailsResource#list, RevenueResource
+    # #attribution, SegmentsResource#members, SubscriptionResource#get,
+    # TeamMembersResource#get and DmarcResource#remove_domain all raised
+    # NoMethodError the moment they were called. Core::Query.encode was written
+    # to be "shared by every generated GET/DELETE method" and already drops
+    # nils; it was simply never wired up.
+    def compact(params)
+      params.reject { |_, v| v.nil? }
+    end
+
+    def query(params)
+      Core::Query.encode(params)
     end
   end
 
@@ -794,10 +814,17 @@ module MisarMail
       parse_body(resp)["error"] || "plan limit exceeded"
     end
 
+    # Always a Hash. Both callers index it by string key, and a top-level JSON
+    # array is a shape this API really returns — parse_response has always had
+    # a branch for it. Returning the raw Array here made plan_limit? raise
+    # "TypeError: no implicit conversion of String into Integer" before
+    # parse_response ever got to use that branch, so an array response could
+    # not be delivered at all.
     def parse_body(resp)
       return {} if resp.body.nil? || resp.body.empty?
 
-      JSON.parse(resp.body)
+      decoded = JSON.parse(resp.body)
+      decoded.is_a?(Hash) ? decoded : {}
     rescue JSON::ParserError
       {}
     end
