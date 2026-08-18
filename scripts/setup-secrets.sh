@@ -50,8 +50,14 @@ set_secret "OSSRH_USERNAME" "$(prompt OSSRH_USERNAME 'Sonatype token username')"
 set_secret "OSSRH_TOKEN"    "$(prompt OSSRH_TOKEN    'Sonatype token password')"
 
 # Packagist — PHP
-set_secret "PACKAGIST_API_TOKEN" "$(prompt PACKAGIST_API_TOKEN \
-  'packagist.org → Profile → Show API Token  |  Also submit repo URL at packagist.org/packages/submit')"
+# Submitting the package is no longer a manual step: publish-php.yml calls
+# Packagist's create-package API and treats "already exists" as success. That
+# endpoint needs the MAIN token — the SAFE token can only call update-package
+# and answers 403 — and it needs the username alongside it.
+echo; echo "── Packagist (PHP)"
+echo "  packagist.org → Profile → Show API tokens → MAIN token (not the safe one)"
+set_secret "PACKAGIST_USERNAME"  "$(prompt PACKAGIST_USERNAME  'Packagist account name')"
+set_secret "PACKAGIST_API_TOKEN" "$(prompt PACKAGIST_API_TOKEN 'Packagist MAIN API token')"
 
 # pub.dev — Dart, Flutter
 echo; echo "── pub.dev credentials (Dart & Flutter)"
@@ -60,6 +66,15 @@ echo "  Then: cat ~/.config/dart/pub-credentials.json"
 echo "  Paste full JSON (blank line to end):"
 PUB_CREDS=""; while IFS= read -r line; do [ -z "$line" ] && break; PUB_CREDS+="$line"$'\n'; done
 set_secret "PUB_CREDENTIALS" "${PUB_CREDS%$'\n'}"
+
+# Cross-repository push — PHP & Swift standalone mirrors
+# The only PAT this setup still needs. split-standalone.yml pushes php/ and
+# swift/ into Misar-AI/misarmail-php and Misar-AI/misarmail-swift, and the
+# default GITHUB_TOKEN is scoped to this repository alone. Nothing else needs
+# a PAT: auto-tag.yml calls the publish workflows directly instead of relying
+# on a tag push to trigger them, so there is no RELEASE_TOKEN any more.
+set_secret "SPLIT_TOKEN" "$(prompt SPLIT_TOKEN \
+  'Fine-grained PAT with contents:write on misarmail-php and misarmail-swift')"
 
 # Swift Package Index — optional
 set_secret "SPI_TOKEN" "$(prompt SPI_TOKEN \

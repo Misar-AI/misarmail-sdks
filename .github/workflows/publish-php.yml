@@ -1,0 +1,144 @@
+name: Publish PHP SDK (Packagist)
+
+# Packagist cannot index a subdirectory, so `misarai/misarmail-php` is served
+# from the standalone repository Misar-AI/misarmail-php. Registration there is
+# not automatic: until the repository has been SUBMITTED once, Packagist has
+# never heard of the package and every php/v* tag is a no-op. That is the state
+# this repo was in — the tag existed, the standalone repo existed, and the
+# package did not. `scripts/setup-secrets.sh` even asked a human to go and
+# submit the URL by hand, which nobody did.
+#
+# Two API calls, in this order:
+#   create-package  registers the repository. Idempotent here: an "already
+#                   exists" answer is treated as success, so it is safe to run
+#                   on every release and it self-heals if the package is ever
+#                   removed.
+#   update-package  asks Packagist to re-crawl so the new tag shows up now
+#                   rather than whenever its scheduler gets round to it.
+#
+# create-package requires Packagist's MAIN API token. The SAFE token is scoped
+# to update-package only and will answer 403 here — if that happens, swap
+# PACKAGIST_API_TOKEN for the main token (packagist.org → Profile → Show API
+# tokens → Main token). Neither token is ever printed.
+#
+# There is deliberately no `push: tags` trigger. split-standalone.yml owns the
+# php/v* tag: it pushes swift/ and php/ to their standalone repos and then calls
+# this workflow. Triggering on the same tag would run both in parallel and a
+# re-crawl that arrives before the split has pushed just re-reads the previous
+# release.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version being released (informational — Packagist derives versions from tags)'
+        required: false
+        type: string
+      repository:
+        description: 'Repository URL to register with Packagist'
+        required: false
+        default: 'https://github.com/Misar-AI/misarmail-php'
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being released (informational — Packagist derives versions from tags)'
+        required: false
+        type: string
+      repository:
+        description: 'Repository URL to register with Packagist'
+        required: false
+        default: 'https://github.com/Misar-AI/misarmail-php'
+        type: string
+
+jobs:
+  packagist:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Fail before touching the API, with the name of the missing secret.
+      - name: Preflight — required credentials
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${PACKAGIST_USERNAME:-}" ]  || missing="$missing PACKAGIST_USERNAME"
+          [ -n "${PACKAGIST_API_TOKEN:-}" ] || missing="$missing PACKAGIST_API_TOKEN"
+          if [ -n "$missing" ]; then
+            for s in $missing; do
+              echo "::error::${s} is not set for this repository — misarai/misarmail-php cannot be registered with or refreshed on Packagist. Add it under Settings → Secrets and variables → Actions → Repository secrets."
+            done
+            exit 1
+          fi
+          echo "Packagist credentials are present (secret values are never printed)."
+
+      - name: Register the package with Packagist
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+          REPO_URL: ${{ inputs.repository || 'https://github.com/Misar-AI/misarmail-php' }}
+        run: |
+          set -euo pipefail
+          BODY="$(mktemp)"
+          # Capture the status code as a VALUE. curl's exit status is 0 for any
+          # HTTP response, including a 403, so branching on `curl || ...` would
+          # sail straight past a rejected token.
+          HTTP=$(curl -sS -o "$BODY" -w '%{http_code}' \
+            -X POST 'https://packagist.org/api/create-package' \
+            -H "Authorization: Bearer ${PACKAGIST_USERNAME}:${PACKAGIST_API_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"repository\":\"${REPO_URL}\"}") || HTTP=""
+          RESPONSE=$(cat "$BODY")
+          echo "create-package → HTTP ${HTTP:-<none>}: ${RESPONSE}"
+
+          if [ -z "${HTTP:-}" ]; then
+            echo "::error::create-package got no HTTP response from packagist.org (network/DNS). ${REPO_URL} was NOT registered."
+            exit 1
+          fi
+
+          LOWER=$(printf '%s' "$RESPONSE" | tr '[:upper:]' '[:lower:]')
+          if printf '%s' "$LOWER" | grep -q 'already'; then
+            # "Package already exists" / "already in the system" — the whole
+            # point of running this every release is that it must not fail.
+            echo "::notice::${REPO_URL} is already registered on Packagist — nothing to do."
+          elif [ "$HTTP" = "200" ] || [ "$HTTP" = "201" ] || [ "$HTTP" = "202" ]; then
+            echo "::notice::Registered ${REPO_URL} with Packagist as misarai/misarmail-php."
+          elif [ "$HTTP" = "401" ] || [ "$HTTP" = "403" ]; then
+            echo "::error::Packagist rejected the credentials (HTTP ${HTTP}). create-package needs the MAIN API token; the SAFE token can only call update-package. Replace PACKAGIST_API_TOKEN with the main token from packagist.org → Profile → Show API tokens, and check PACKAGIST_USERNAME matches that account."
+            exit 1
+          else
+            echo "::error::create-package failed with HTTP ${HTTP}: ${RESPONSE}"
+            exit 1
+          fi
+
+      - name: Ask Packagist to re-crawl
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+          REPO_URL: ${{ inputs.repository || 'https://github.com/Misar-AI/misarmail-php' }}
+        run: |
+          set -euo pipefail
+          BODY="$(mktemp)"
+          HTTP=$(curl -sS -o "$BODY" -w '%{http_code}' \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_API_TOKEN}" \
+            -d "{\"repository\":{\"url\":\"${REPO_URL}\"}}") || HTTP=""
+          RESPONSE=$(cat "$BODY")
+          echo "update-package → HTTP ${HTTP:-<none>}: ${RESPONSE}"
+
+          case "${HTTP:-}" in
+            200|201|202)
+              echo "::notice::Packagist is re-crawling ${REPO_URL}." ;;
+            401|403)
+              # A rejected token is a configuration bug, not weather. Loud.
+              echo "::error::Packagist rejected the credentials on update-package (HTTP ${HTTP}). Check PACKAGIST_USERNAME / PACKAGIST_API_TOKEN."
+              exit 1 ;;
+            *)
+              # The package is registered by now, and Packagist crawls on its
+              # own schedule, so a failed nudge delays the listing rather than
+              # breaking the release. Warn, do not fail.
+              echo "::warning::update-package returned HTTP ${HTTP:-<none>}: ${RESPONSE}. The package is registered; Packagist will pick the tag up on its own schedule." ;;
+          esac
