@@ -1,16 +1,28 @@
 {
     "name": "misarai/misarmail-php",
-    "description": "Official PHP SDK for MisarMail \u2014 full API coverage",
+    "description": "PHP client for MisarMail's transactional and marketing email API: send mail, run campaigns and A/B tests, manage contacts, segments, templates and automations, verify domains and DMARC, validate addresses, track revenue and read analytics \u2014 33 resource groups, retries, typed plan-limit errors, SSE streaming.",
     "type": "library",
     "license": "MIT",
     "homepage": "https://misarmail.com",
     "keywords": [
         "misarmail",
         "email",
-        "sdk",
-        "php",
-        "transactional",
-        "marketing"
+        "email-api",
+        "transactional-email",
+        "email-marketing",
+        "campaigns",
+        "newsletter",
+        "smtp",
+        "deliverability",
+        "dmarc",
+        "email-validation",
+        "contacts",
+        "templates",
+        "automation",
+        "analytics",
+        "webhooks",
+        "sse",
+        "api-client"
     ],
     "authors": [
         {

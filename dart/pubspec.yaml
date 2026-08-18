@@ -1,9 +1,17 @@
 name: misarmail
-description: Official Dart SDK for MisarMail — transactional email, campaigns, leads, CRM. Full API coverage with retry logic.
+description: "Send transactional email and run marketing campaigns from Dart: MisarMail's API for sends, campaigns, contacts, templates, domains, validation, analytics, webhooks and SSE."
 version: 1.0.0
 homepage: https://misarmail.com/docs/sdks/dart
 repository: https://github.com/Misar-AI/misarmail-sdks
 issue_tracker: https://github.com/Misar-AI/misarmail-sdks/issues
+documentation: https://misarmail.com/docs
+
+topics:
+  - email
+  - transactional-email
+  - marketing
+  - api-client
+  - webhooks
 
 environment:
   sdk: ">=3.0.0 <4.0.0"

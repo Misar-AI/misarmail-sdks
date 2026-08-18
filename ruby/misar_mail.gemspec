@@ -3,8 +3,14 @@ Gem::Specification.new do |spec|
   spec.version       = "1.0.0"
   spec.authors       = ["Misar AI"]
   spec.email         = ["hello@misar.io"]
-  spec.summary       = "Official Ruby SDK for MisarMail — transactional email, campaigns, leads, CRM"
-  spec.description   = "Full-featured Ruby SDK for the MisarMail API (misarmail.com). Covers all 24 resource groups and 101 methods."
+  spec.summary       = "Ruby client for MisarMail: transactional send, campaigns, contacts, templates, automations, deliverability and analytics in one API"
+  spec.description   = "Ruby client for MisarMail's transactional and marketing email API " \
+                       "(misarmail.com): send mail, run campaigns and A/B tests, manage " \
+                       "contacts, segments, templates and automations, verify domains and " \
+                       "DMARC, validate addresses, track revenue and read analytics. " \
+                       "33 resource groups on one client, plus retries with backoff, typed " \
+                       "plan-limit errors, SSE streaming, and constant-time webhook " \
+                       "signature verification. No runtime dependencies beyond the stdlib."
   spec.homepage      = "https://misarmail.com/docs/sdks/ruby"
   spec.license       = "MIT"
   spec.required_ruby_version = ">= 2.7"

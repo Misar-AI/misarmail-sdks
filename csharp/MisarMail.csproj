@@ -13,11 +13,11 @@
     <Version>1.0.0</Version>
     <Authors>Misar AI</Authors>
     <Company>Misar AI Technology Pvt Ltd</Company>
-    <Description>Official C# SDK for MisarMail — transactional email, campaigns, leads, CRM. Full API coverage with async/await support.</Description>
+    <Description>.NET client for MisarMail's transactional and marketing email API: send mail, run campaigns and A/B tests, manage contacts, segments, templates and automations, verify domains and DMARC, validate addresses, track revenue and read analytics. 33 resource groups over async/await, with retries, typed plan-limit errors and SSE streaming.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://misarmail.com/docs/sdks/csharp</PackageProjectUrl>
     <RepositoryUrl>https://github.com/Misar-AI/misarmail-sdks</RepositoryUrl>
-    <PackageTags>misarmail;email;sdk;api;transactional;marketing</PackageTags>
+    <PackageTags>misarmail;email;email-api;transactional-email;email-marketing;campaigns;newsletter;smtp;deliverability;dmarc;email-validation;contacts;templates;automation;analytics;webhooks;sse;api-client;dotnet</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
   </PropertyGroup>

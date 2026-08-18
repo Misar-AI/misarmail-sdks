@@ -1,3 +1,24 @@
+// Package misarmail sends transactional email and runs marketing campaigns from
+// Go against MisarMail's HTTP API at https://api.misar.io/mail/v1.
+//
+// One [Client] reaches every resource as an exported field: transactional
+// [EmailResource] sends and the [SandboxResource], [CampaignsResource] with
+// [ABTestsResource], audience ([ContactsResource], [SegmentsResource],
+// [LandingPagesResource]), content ([TemplatesResource], [AiResource]),
+// [AutomationsResource], sending infrastructure ([DomainsResource],
+// [DmarcResource], [DeliverabilityResource], [DedicatedIPsResource],
+// [WarmupResource], [InboundResource]), analytics and attribution
+// ([AnalyticsResource], [TrackResource], [RevenueResource], [UsageResource]),
+// [ValidateResource], plan and credits ([PlanResource], [BillingResource],
+// [SubscriptionResource], [WalletResource], [CreditRatesResource],
+// [TeamMembersResource], [MonetizationResource]) and the developer surface
+// ([KeysResource], [WebhooksResource], [StreamingResource]).
+//
+// Calls authenticate with a MisarMail developer key (msk_…) sent as
+// Authorization: Bearer, take a context.Context, and retry transient failures
+// with exponential back-off. A plan refusal is typed as [PlanLimitError] and
+// never retried. [StreamingResource] consumes the two Server-Sent Events
+// endpoints, and [VerifyWebhookSignature] authenticates inbound webhooks.
 package misarmail
 
 import (
@@ -521,7 +542,6 @@ func (r *DomainsResource) Verify(ctx context.Context, id string) (*DomainVerific
 func (r *DomainsResource) Delete(ctx context.Context, id string) error {
 	return r.c.requestAPI(ctx, http.MethodDelete, "/domains/"+id, nil, nil)
 }
-
 
 // ── Dedicated IPs ─────────────────────────────────────────────────────────────
 

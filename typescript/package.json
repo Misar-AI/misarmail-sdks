@@ -1,7 +1,7 @@
 {
   "name": "@misarmail/sdk",
   "version": "1.0.0",
-  "description": "Official TypeScript/JavaScript SDK for MisarMail \u2014 full API coverage, retry, ESM+CJS",
+  "description": "MisarMail's transactional and marketing email API in TypeScript: send mail, run campaigns and A/B tests, manage contacts, segments, templates and automations, verify domains and DMARC, validate addresses, track revenue, read analytics \u2014 43 typed resources, retries, SSE streaming, ESM+CJS.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -27,10 +27,21 @@
   "keywords": [
     "misarmail",
     "email",
+    "email-api",
+    "transactional-email",
+    "email-marketing",
+    "campaigns",
+    "newsletter",
+    "smtp",
+    "deliverability",
+    "dmarc",
+    "email-validation",
+    "contacts",
+    "templates",
+    "webhooks",
     "sdk",
-    "api",
-    "transactional",
-    "marketing"
+    "api-client",
+    "typescript"
   ],
   "author": "Misar AI <hello@misar.io>",
   "license": "MIT",

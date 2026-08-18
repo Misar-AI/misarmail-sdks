@@ -19,6 +19,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.16.1")
     testImplementation(kotlin("test"))
+    // Gradle 9 no longer puts the JUnit Platform launcher on the test runtime
+    // classpath implicitly. Without it `gradle test` dies with "Failed to load
+    // JUnit Platform" before running a single test.
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
     testImplementation("io.mockk:mockk:1.13.9")
 }
@@ -45,7 +49,12 @@ publishing {
 
             pom {
                 name.set("MisarMail Kotlin SDK")
-                description.set("Official Kotlin SDK for the MisarMail API — coroutines, full API coverage")
+                description.set(
+                    "Send transactional email and run marketing campaigns from Kotlin: " +
+                        "MisarMail's API for sends, campaigns, contacts, templates, automations, " +
+                        "domain/DMARC checks, address validation, tracking and analytics, " +
+                        "with coroutines, retries and Flow SSE streams."
+                )
                 url.set("https://misarmail.com/docs/sdks/kotlin")
                 licenses {
                     license {

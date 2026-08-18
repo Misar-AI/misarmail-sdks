@@ -5,21 +5,46 @@ build-backend = "hatchling.build"
 [project]
 name = "misarmail"
 version = "1.0.0"
-description = "Official Python SDK for MisarMail — transactional email, campaigns, leads, CRM"
+description = "Send transactional email and run marketing campaigns from Python: MisarMail's HTTP API for sends, campaigns, contacts, templates, automations, domain and DMARC checks, address validation, tracking, analytics and webhooks — sync and async, retries, SSE streaming."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Misar AI", email = "hello@misar.io" }]
-keywords = ["misarmail", "email", "sdk", "api", "transactional", "marketing"]
+keywords = [
+  "misarmail",
+  "email",
+  "email-api",
+  "transactional-email",
+  "email-marketing",
+  "marketing-automation",
+  "campaigns",
+  "contacts",
+  "templates",
+  "deliverability",
+  "dmarc",
+  "email-validation",
+  "webhooks",
+  "sse",
+  "async",
+  "api-client",
+  "sdk",
+]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: AsyncIO",
+  "Topic :: Communications :: Email",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = ["httpx>=0.27"]
 
@@ -29,6 +54,10 @@ Documentation = "https://misarmail.com/docs/sdks/python"
 Repository = "https://github.com/Misar-AI/misarmail-sdks"
 
 [project.optional-dependencies]
+# MisarMailSocket raises an ImportError pointing at `misarmail[websocket]`, so
+# the extra has to exist. `additional_headers=` on websockets.connect is the
+# 14.0+ asyncio client API; 13.x named it `extra_headers`.
+websocket = ["websockets>=14"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "respx>=0.21", "build", "twine"]
 
 [tool.pytest.ini_options]

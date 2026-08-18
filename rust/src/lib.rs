@@ -707,14 +707,21 @@ impl KeysResource {
 pub struct ValidateResource(Arc<Inner>);
 
 impl ValidateResource {
+    /// `POST /validate` — verify one address, spending a validation credit.
+    ///
+    /// The address goes in the **body** as `email`. This used to issue
+    /// `GET /validate?address=…`, which is a different endpoint entirely — GET
+    /// returns the wallet credit balance and ignores the query string, so the
+    /// call never verified anything.
     pub async fn email(&self, address: &str) -> Result<Value, MisarMailError> {
         self.0
-            .get_with_params(
-                "/validate",
-                json!({ "address": address }),
-                false,
-            )
+            .request(Method::POST, "/validate", Some(json!({ "email": address })), false)
             .await
+    }
+
+    /// `GET /validate` — remaining validation credits.
+    pub async fn balance(&self) -> Result<Value, MisarMailError> {
+        self.0.request(Method::GET, "/validate", None, false).await
     }
 }
 
