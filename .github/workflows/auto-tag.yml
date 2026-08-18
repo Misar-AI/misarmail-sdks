@@ -46,6 +46,12 @@ permissions:
   contents: write
   id-token: write
 
+# NOTE: flutter is deliberately absent. The product ships ONE pure-Dart
+# package per product (misarblog / misarmail / misarreach) that works from
+# Dart CLI, Dart server and Flutter on all five platforms. The former
+# <product>_flutter packages are discontinued on pub.dev and are no longer
+# built or published from here.
+
 jobs:
   tag:
     runs-on: ubuntu-latest
@@ -68,8 +74,6 @@ jobs:
       csharp_version: ${{ steps.tag.outputs.version_csharp }}
       dart: ${{ steps.tag.outputs.publish_dart }}
       dart_version: ${{ steps.tag.outputs.version_dart }}
-      flutter: ${{ steps.tag.outputs.publish_flutter }}
-      flutter_version: ${{ steps.tag.outputs.version_flutter }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,7 +93,7 @@ jobs:
           # (proxy.golang.org, Packagist and SwiftPM each read the tag). There
           # is nothing here to derive a version from, so they are tagged by
           # hand and split-standalone.yml takes it from there.
-          LANGS="typescript python rust ruby java kotlin csharp dart flutter"
+          LANGS="typescript python rust ruby java kotlin csharp dart"
 
           GATE=",$(printf '%s' "${TARGETS:-}" | tr -d '[:space:]'),"
           if [ "$GATE" = ",," ]; then
@@ -129,7 +133,7 @@ jobs:
               java)         raw=$(grep -m1 '<version>' java/pom.xml 2>/dev/null || true) ;;
               kotlin)       raw=$(grep -m1 -E '^version[[:space:]]*=' kotlin/build.gradle.kts 2>/dev/null || true) ;;
               csharp)       raw=$(grep -h -m1 '<Version>' csharp/*.csproj 2>/dev/null || true) ;;
-              dart|flutter) raw=$(grep -m1 -E '^version:' "${lang}/pubspec.yaml" 2>/dev/null || true) ;;
+              dart) raw=$(grep -m1 -E '^version:' "${lang}/pubspec.yaml" 2>/dev/null || true) ;;
             esac
             # One rule for every language: the first semver-shaped token on the
             # line we found. There is deliberately no `|| echo "0.1.0"`
@@ -252,10 +256,3 @@ jobs:
       version: ${{ needs.tag.outputs.dart_version }}
     secrets: inherit
 
-  flutter:
-    needs: tag
-    if: needs.tag.outputs.flutter == 'true'
-    uses: ./.github/workflows/publish-flutter.yml
-    with:
-      version: ${{ needs.tag.outputs.flutter_version }}
-    secrets: inherit
