@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = "misarmail"
-  spec.version       = "5.0.2"
+  spec.version       = "5.0.3"
   spec.authors       = ["Misar AI"]
   spec.email         = ["hello@misar.io"]
   spec.summary       = "Ruby client for MisarMail: transactional send, campaigns, contacts, templates, automations, deliverability and analytics in one API"

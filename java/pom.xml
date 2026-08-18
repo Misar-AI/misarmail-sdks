@@ -7,7 +7,7 @@
 
     <groupId>io.misar</groupId>
     <artifactId>misarmail</artifactId>
-    <version>5.0.2</version>
+    <version>5.0.3</version>
     <packaging>jar</packaging>
 
     <name>MisarMail Java SDK</name>

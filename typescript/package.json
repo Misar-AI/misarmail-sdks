@@ -1,6 +1,6 @@
 {
   "name": "@misarmail/sdk",
-  "version": "5.0.2",
+  "version": "5.0.3",
   "description": "MisarMail's transactional and marketing email API in TypeScript: send mail, run campaigns and A/B tests, manage contacts, segments, templates and automations, verify domains and DMARC, validate addresses, track revenue, read analytics \u2014 43 typed resources, retries, SSE streaming, ESM+CJS.",
   "type": "module",
   "main": "./dist/index.cjs",

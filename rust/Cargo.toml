@@ -1,6 +1,6 @@
 [package]
 name = "misarmail"
-version = "5.0.2"
+version = "5.0.3"
 edition = "2021"
 description = "Async Rust client for MisarMail's transactional and marketing email API: send mail, run campaigns and A/B tests, manage contacts, segments, templates and automations, verify domains and DMARC, validate addresses, track revenue and read analytics. Retries, typed plan-limit errors, SSE streaming."
 license = "MIT"
